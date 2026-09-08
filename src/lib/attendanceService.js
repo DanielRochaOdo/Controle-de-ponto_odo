@@ -18,10 +18,7 @@ export const DEFAULT_SETTINGS = {
     [TimeRecordStatus.EARLY]: 5,
     [TimeRecordStatus.ADJUSTED]: 0,
   },
-  colors: {
-    ...StatusColors,
-    [TimeRecordStatus.ADJUSTED]: '#eab308',
-  },
+  colors: { ...StatusColors, [TimeRecordStatus.ADJUSTED]: '#eab308' },
 };
 
 const mapSettings = (row) => ({
@@ -38,13 +35,7 @@ const mapSettings = (row) => ({
 
 export async function loadAttendanceSettings(userId) {
   if (!userId) return DEFAULT_SETTINGS;
-
-  const { data, error } = await supabase
-    .from('attendance_settings')
-    .select('*')
-    .eq('user_id', userId)
-    .maybeSingle();
-
+  const { data, error } = await supabase.from('attendance_settings').select('*').eq('user_id', userId).maybeSingle();
   if (error) throw error;
   return mapSettings(data);
 }
@@ -61,114 +52,86 @@ export async function saveAttendanceSettings(userId, settings) {
     updated_at: new Date().toISOString(),
   };
 
-  const { data, error } = await supabase
-    .from('attendance_settings')
-    .upsert(payload, { onConflict: 'user_id' })
-    .select('*')
-    .single();
-
+  const { data, error } = await supabase.from('attendance_settings').upsert(payload, { onConflict: 'user_id' }).select('*').single();
   if (error) throw error;
+
+  const { error: recalculateError } = await supabase.rpc('recalculate_attendance', { p_user_id: userId });
+  if (recalculateError) throw recalculateError;
   return mapSettings(data);
 }
 
 function applyFilters(query, userId, filters) {
   let next = query.eq('user_id', userId);
-
   if (filters.startDate) next = next.gte('work_date', filters.startDate);
   if (filters.endDate) next = next.lte('work_date', filters.endDate);
   if (filters.employee && filters.employee !== 'all') next = next.eq('employee_name', filters.employee);
   if (filters.department && filters.department !== 'all') next = next.eq('department', filters.department);
-  if (filters.status && filters.status !== 'all') {
-    next = next.or(`entry_status.eq.${filters.status},exit_status.eq.${filters.status}`);
-  }
-
+  if (filters.status && filters.status !== 'all') next = next.or(`entry_status.eq.${filters.status},exit_status.eq.${filters.status}`);
   return next;
 }
 
 export async function fetchAttendancePage(userId, filters, page = 1, pageSize = 50) {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
-
-  let query = supabase
-    .from('attendance_days')
-    .select('*', { count: 'exact' });
-
-  query = applyFilters(query, userId, filters)
-    .order('work_date', { ascending: false })
-    .order('employee_name', { ascending: true })
-    .range(from, to);
-
+  let query = supabase.from('attendance_days').select('*', { count: 'exact' });
+  query = applyFilters(query, userId, filters).order('work_date', { ascending: false }).order('employee_name').range(from, to);
   const { data, error, count } = await query;
   if (error) throw error;
   return { records: data || [], count: count || 0 };
 }
 
 export async function fetchAllAttendance(userId, filters) {
-  let query = supabase.from('attendance_days').select('*');
-  query = applyFilters(query, userId, filters)
-    .order('work_date', { ascending: false })
-    .order('employee_name', { ascending: true });
+  const result = [];
+  const batchSize = 1000;
+  let offset = 0;
 
-  const { data, error } = await query;
-  if (error) throw error;
-  return data || [];
+  while (true) {
+    let query = supabase.from('attendance_days').select('*');
+    query = applyFilters(query, userId, filters)
+      .order('work_date', { ascending: false })
+      .order('employee_name')
+      .range(offset, offset + batchSize - 1);
+
+    const { data, error } = await query;
+    if (error) throw error;
+    const batch = data || [];
+    result.push(...batch);
+    if (batch.length < batchSize) break;
+    offset += batchSize;
+  }
+
+  return result;
 }
 
 export async function fetchFilterOptions(userId) {
-  const { data, error } = await supabase
-    .from('attendance_days')
-    .select('employee_name,department')
-    .eq('user_id', userId)
-    .order('employee_name');
-
+  const { data, error } = await supabase.rpc('get_attendance_filter_options', { p_user_id: userId });
   if (error) throw error;
-
   return {
-    employees: [...new Set((data || []).map((item) => item.employee_name).filter(Boolean))],
-    departments: [...new Set((data || []).map((item) => item.department).filter(Boolean))].sort(),
+    employees: data?.employees || [],
+    departments: data?.departments || [],
   };
 }
 
 export async function fetchTodayDashboard(userId) {
   const today = format(new Date(), 'yyyy-MM-dd');
-  const { data, error } = await supabase
-    .from('attendance_days')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('work_date', today)
-    .order('employee_name')
-    .limit(1000);
-
+  const { data, error } = await supabase.from('attendance_days').select('*').eq('user_id', userId).eq('work_date', today).order('employee_name').limit(1000);
   if (error) throw error;
   return data || [];
 }
 
 export async function fetchLatestImport(userId) {
-  const { data, error } = await supabase
-    .from('flash_import_runs')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'completed')
-    .order('finished_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
+  const { data, error } = await supabase.from('flash_import_runs').select('*').eq('user_id', userId).eq('status', 'completed').order('finished_at', { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
   return data || null;
 }
 
 export async function importAttendanceFromFlash(startDate, endDate) {
   const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError || !session?.access_token) {
-    throw new Error('Sessão expirada. Entre novamente no sistema.');
-  }
+  if (sessionError || !session?.access_token) throw new Error('Sessão expirada. Entre novamente no sistema.');
 
   const response = await fetch('/api/import-attendance', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${session.access_token}`,
-    },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
     body: JSON.stringify({ startDate, endDate }),
   });
 

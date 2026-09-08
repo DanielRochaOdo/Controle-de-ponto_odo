@@ -8,28 +8,18 @@ const pick = (object, paths) => {
   }
   return null;
 };
-
 const asArray = (value) => Array.isArray(value) ? value : [];
 
 async function flashGet(path, query = {}) {
   const apiKey = process.env.FLASH_API_KEY;
   if (!apiKey) throw new Error('FLASH_API_KEY não configurada.');
-
   const url = new URL(path, FLASH_BASE_URL);
   Object.entries(query).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
   });
-
-  const response = await fetch(url, {
-    headers: { 'x-flash-auth': apiKey, Accept: 'application/json' },
-  });
-
+  const response = await fetch(url, { headers: { 'x-flash-auth': apiKey, Accept: 'application/json' } });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = payload?.message || `Flash API respondeu ${response.status}`;
-    throw new Error(message);
-  }
-
+  if (!response.ok) throw new Error(payload?.message || `Flash API respondeu ${response.status}`);
   return payload;
 }
 
@@ -37,17 +27,14 @@ export async function listEmployees(companyId) {
   const records = [];
   let page = 1;
   const limit = 100;
-
   while (page <= 100) {
     const payload = await flashGet('/core/v1/employees', { page, limit, companyId });
     const current = asArray(payload?.records);
     records.push(...current);
-
     const totalPages = Number(pick(payload, ['metadata.totalPages', 'metadata.pages'])) || null;
     if ((totalPages && page >= totalPages) || current.length < limit) break;
     page += 1;
   }
-
   return records;
 }
 
@@ -69,7 +56,6 @@ export function dateRange(startDate, endDate) {
   const result = [];
   const cursor = new Date(`${startDate}T12:00:00Z`);
   const end = new Date(`${endDate}T12:00:00Z`);
-
   while (cursor <= end) {
     result.push(cursor.toISOString().slice(0, 10));
     cursor.setUTCDate(cursor.getUTCDate() + 1);
@@ -77,50 +63,31 @@ export function dateRange(startDate, endDate) {
   return result;
 }
 
-const normalizeClock = (value, day) => {
+const normalizeClock = (value) => {
   if (value === null || value === undefined) return null;
   const raw = String(value).trim();
-
-  const clockMatch = raw.match(/(?:^|\s)([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?(?:$|\s)/);
-  if (clockMatch && !raw.includes('T')) {
-    return `${clockMatch[1].padStart(2, '0')}:${clockMatch[2]}`;
-  }
-
   if (/^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/.test(raw)) {
     const [hour, minute] = raw.split(':');
     return `${hour.padStart(2, '0')}:${minute}`;
   }
-
+  const nonIsoMatch = raw.match(/(?:^|\s)([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?(?:$|\s)/);
+  if (nonIsoMatch && !raw.includes('T')) return `${nonIsoMatch[1].padStart(2, '0')}:${nonIsoMatch[2]}`;
   const parsed = new Date(raw);
   if (!Number.isNaN(parsed.getTime())) {
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: DEFAULT_TIMEZONE,
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).formatToParts(parsed);
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: DEFAULT_TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(parsed);
     const hour = parts.find((part) => part.type === 'hour')?.value;
     const minute = parts.find((part) => part.type === 'minute')?.value;
     if (hour && minute) return `${hour}:${minute}`;
   }
-
-  if (day) {
-    const match = raw.match(/([01]?\d|2[0-3]):([0-5]\d)/);
-    if (match) return `${match[1].padStart(2, '0')}:${match[2]}`;
-  }
   return null;
 };
 
-const markKeys = [
-  'occurredAt', 'clockedAt', 'dateTime', 'datetime', 'timestamp', 'markedAt',
-  'attendanceAt', 'punchAt', 'time', 'hour', 'value', 'createdAt',
-];
+const markKeys = ['occurredAt', 'clockedAt', 'dateTime', 'datetime', 'timestamp', 'markedAt', 'attendanceAt', 'punchAt', 'time', 'hour', 'value', 'createdAt'];
 
-function extractMarkTime(mark, day) {
-  if (typeof mark === 'string' || typeof mark === 'number') return normalizeClock(mark, day);
+function extractMarkTime(mark) {
+  if (typeof mark === 'string' || typeof mark === 'number') return normalizeClock(mark);
   if (!mark || typeof mark !== 'object') return null;
-  const value = pick(mark, markKeys);
-  return normalizeClock(value, day);
+  return normalizeClock(pick(mark, markKeys));
 }
 
 function findMarkArrays(value, depth = 0, result = []) {
@@ -133,32 +100,12 @@ function findMarkArrays(value, depth = 0, result = []) {
   if (typeof value === 'object') {
     Object.entries(value).forEach(([key, child]) => {
       const normalizedKey = key.toLowerCase();
-      if (Array.isArray(child) && /(punch|mark|attendance|clock|entr|batida|record|time)/.test(normalizedKey)) {
-        result.push(child);
-      }
+      if (/(schedule|timetable|contract|shift|scale|escala)/.test(normalizedKey)) return;
+      if (Array.isArray(child) && /(punch|mark|attendance|clock|entr|batida|record|time)/.test(normalizedKey)) result.push(child);
       findMarkArrays(child, depth + 1, result);
     });
   }
   return result;
-}
-
-function collectPunches(items, day) {
-  const values = [];
-  items.forEach((item) => {
-    const ownTime = extractMarkTime(item, day);
-    if (ownTime) values.push({ time: ownTime, adjusted: isAdjusted(item) });
-
-    findMarkArrays(item).forEach((array) => {
-      array.forEach((mark) => {
-        const time = extractMarkTime(mark, day);
-        if (time) values.push({ time, adjusted: isAdjusted(mark) || isAdjusted(item) });
-      });
-    });
-  });
-
-  const unique = new Map();
-  values.forEach((value) => unique.set(`${value.time}:${value.adjusted}`, value));
-  return [...unique.values()].sort((a, b) => a.time.localeCompare(b.time));
 }
 
 function isAdjusted(value, depth = 0) {
@@ -172,20 +119,31 @@ function isAdjusted(value, depth = 0) {
   return false;
 }
 
+function collectPunches(items) {
+  const values = [];
+  items.forEach((item) => {
+    const ownTime = extractMarkTime(item);
+    if (ownTime) values.push({ time: ownTime, adjusted: isAdjusted(item) });
+    findMarkArrays(item).forEach((array) => array.forEach((mark) => {
+      const time = extractMarkTime(mark);
+      if (time) values.push({ time, adjusted: isAdjusted(mark) || isAdjusted(item) });
+    }));
+  });
+  const unique = new Map();
+  values.forEach((value) => unique.set(value.time, { ...unique.get(value.time), ...value, adjusted: value.adjusted || unique.get(value.time)?.adjusted }));
+  return [...unique.values()].sort((a, b) => a.time.localeCompare(b.time));
+}
+
 const timeToMinutes = (time) => {
   if (!time) return null;
   const [hour, minute] = time.split(':').map(Number);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-  return hour * 60 + minute;
+  return Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : null;
 };
 
 function collectScheduleTimes(value, depth = 0, result = []) {
   if (value === null || value === undefined || depth > 6) return result;
   if (typeof value === 'string') {
-    if (!value.includes('T')) {
-      const matches = value.match(/(?:[01]?\d|2[0-3]):[0-5]\d/g) || [];
-      matches.forEach((match) => result.push(match.padStart(5, '0')));
-    }
+    if (!value.includes('T')) (value.match(/(?:[01]?\d|2[0-3]):[0-5]\d/g) || []).forEach((match) => result.push(match.padStart(5, '0')));
     return result;
   }
   if (Array.isArray(value)) {
@@ -201,20 +159,17 @@ function collectScheduleTimes(value, depth = 0, result = []) {
   return result;
 }
 
-function expectedTimesFromValue(value) {
-  const explicitEntry = normalizeClock(pick(value, ['scheduledEntry', 'expectedEntry', 'entryTime', 'startTime', 'workStart']), null);
-  const explicitExit = normalizeClock(pick(value, ['scheduledExit', 'expectedExit', 'exitTime', 'endTime', 'workEnd']), null);
-  if (explicitEntry || explicitExit) return { entry: explicitEntry, exit: explicitExit };
-
-  const times = [...new Set(collectScheduleTimes(value))]
-    .filter(Boolean)
-    .sort((a, b) => timeToMinutes(a) - timeToMinutes(b));
+function expectedTimesFromValue(value, allowRecursive = true) {
+  const explicitEntry = normalizeClock(pick(value, ['scheduledEntry', 'expectedEntry', 'entryTime', 'startTime', 'workStart']));
+  const explicitExit = normalizeClock(pick(value, ['scheduledExit', 'expectedExit', 'exitTime', 'endTime', 'workEnd']));
+  if (explicitEntry || explicitExit || !allowRecursive) return { entry: explicitEntry, exit: explicitExit };
+  const times = [...new Set(collectScheduleTimes(value))].filter(Boolean).sort((a, b) => timeToMinutes(a) - timeToMinutes(b));
   return { entry: times[0] || null, exit: times[times.length - 1] || null };
 }
 
 function employeeIdentity(value) {
   return {
-    id: String(pick(value, ['employeeId', 'employee.id', 'employee.employeeId', 'id']) || ''),
+    id: String(pick(value, ['employeeId', 'employee.id', 'employee.employeeId', 'collaboratorId', 'personId']) || ''),
     externalId: String(pick(value, ['externalId', 'employee.externalId']) || ''),
   };
 }
@@ -223,7 +178,6 @@ function allocationMatches(allocation, employee, day) {
   const identity = employeeIdentity(allocation);
   if (identity.id && identity.id !== employee.id) return false;
   if (!identity.id && identity.externalId && identity.externalId !== employee.externalId) return false;
-
   const start = String(pick(allocation, ['startDate', 'validFrom', 'allocationStart']) || '').slice(0, 10);
   const end = String(pick(allocation, ['endDate', 'validTo', 'allocationEnd']) || '').slice(0, 10);
   if (start && day < start) return false;
@@ -234,12 +188,10 @@ function allocationMatches(allocation, employee, day) {
 function evaluateStatus(expected, actual, settings, { exit = false, adjusted = false } = {}) {
   if (!actual || !expected) return null;
   if (adjusted) return 'adjusted';
-
   const diff = timeToMinutes(actual) - timeToMinutes(expected);
   const onTime = Number(settings.on_time_tolerance ?? 5);
   const early = Number(settings.early_tolerance ?? 5);
   const late = Number(exit ? settings.late_exit_tolerance ?? 5 : settings.late_tolerance ?? 5);
-
   if (Math.abs(diff) <= onTime) return 'on_time';
   if (diff < -early) return 'early';
   if (diff > late) return exit ? 'late_exit' : 'late';
@@ -268,22 +220,19 @@ export function normalizeAttendanceDay({ day, attendance, employees, allocations
 
   return [...grouped.values()].map((group) => {
     const employee = group.employee || {};
-    const punches = collectPunches(group.items, day);
+    const punches = collectPunches(group.items);
     const first = punches[0] || null;
     const last = punches.length > 1 ? punches[punches.length - 1] : null;
-
-    const attendanceExpected = expectedTimesFromValue(group.items[0]);
+    const attendanceExpected = expectedTimesFromValue(group.items[0], false);
     const allocation = allocations.find((candidate) => allocationMatches(candidate, {
       id: group.employeeId || String(employee.id || ''),
       externalId: group.externalId || String(employee.externalId || ''),
     }, day));
-    const allocationExpected = expectedTimesFromValue(allocation || {});
-
+    const allocationExpected = expectedTimesFromValue(allocation || {}, true);
     const scheduledEntry = attendanceExpected.entry || allocationExpected.entry;
     const scheduledExit = attendanceExpected.exit || allocationExpected.exit;
     const actualEntry = first?.time || null;
     const actualExit = last?.time || null;
-
     const employeeName = employee.name || group.fallbackName;
     const department = pick(employee, ['departments.0.name', 'department.name', 'department']) || pick(group.items[0], ['departmentName', 'department.name', 'department']) || null;
     const stableEmployeeId = group.employeeId || group.externalId || employeeName;
