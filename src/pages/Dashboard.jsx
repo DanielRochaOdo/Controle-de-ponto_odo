@@ -5,9 +5,11 @@ import {
   Check,
   ChevronRight,
   Clock3,
+  Cloud,
   FileText,
   HelpCircle,
   History,
+  PieChart,
   RefreshCw,
   Settings,
   Users,
@@ -33,7 +35,8 @@ const CARD = 'rounded-2xl border border-[#dfe9d7] bg-white shadow-sm dark:border
 const INPUT = 'h-11 rounded-xl border border-[#d7e5cf] bg-white px-3 text-sm text-[#294436] outline-none transition focus:border-[#57D100] focus:ring-2 focus:ring-[#57D100]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100';
 
 const monthRange = (month) => {
-  const date = new Date(`${month}-01T12:00:00`);
+  const safeMonth = /^\d{4}-\d{2}$/.test(month || '') ? month : format(new Date(), 'yyyy-MM');
+  const date = new Date(`${safeMonth}-01T12:00:00`);
   return {
     startDate: format(startOfMonth(date), 'yyyy-MM-dd'),
     endDate: format(endOfMonth(date), 'yyyy-MM-dd'),
@@ -62,12 +65,17 @@ const MetricCard = ({ icon: Icon, label, value, helper, color }) => (
   </div>
 );
 
+const ApiBadge = () => (
+  <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-[#e7f7dc] text-[#2e9e16] dark:bg-emerald-950 dark:text-emerald-300">
+    <Cloud className="h-9 w-9" strokeWidth={1.8} />
+    <span className="absolute bottom-1.5 rounded bg-white px-1.5 text-[9px] font-bold tracking-wide text-[#2e9e16] shadow-sm dark:bg-slate-900">API</span>
+  </div>
+);
+
 const ApiBanner = () => (
   <section className="mt-6 grid gap-6 rounded-2xl border border-[#cfe8bf] bg-[linear-gradient(110deg,#f3fced_0%,#ffffff_60%,#f1f9ec_100%)] px-6 py-5 shadow-sm dark:border-emerald-900/60 dark:bg-none dark:bg-emerald-950/20 lg:grid-cols-[1fr_360px] lg:items-center">
     <div className="flex items-center gap-5">
-      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-[#e7f7dc] text-[#2e9e16] dark:bg-emerald-950 dark:text-emerald-300">
-        <RefreshCw className="h-8 w-8" />
-      </div>
+      <ApiBadge />
       <div>
         <h2 className="text-lg font-semibold text-[#173c2c] dark:text-slate-100">Dados de ponto via API</h2>
         <p className="mt-1 max-w-3xl text-sm leading-6 text-[#647c6e] dark:text-slate-400">
@@ -238,7 +246,7 @@ const Dashboard = () => {
             <p className="mt-1 text-sm text-[#73877b] dark:text-slate-400">Visão geral dos dados de ponto importados via API</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className={INPUT} />
+            <input type="month" value={month} onChange={(event) => event.target.value && setMonth(event.target.value)} className={INPUT} />
             <button onClick={handleImport} disabled={importing} className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#57D100] px-5 text-sm font-semibold text-[#064E2C] shadow-sm transition hover:bg-[#4bc000] disabled:opacity-60">
               <RefreshCw className={`h-4 w-4 ${importing ? 'animate-spin' : ''}`} />
               {importing ? 'Atualizando...' : 'Atualizar dados da API'}
@@ -270,7 +278,7 @@ const Dashboard = () => {
           </section>
 
           <section className={`${CARD} p-5`}>
-            <div><h2 className="text-lg font-semibold text-[#173c2c] dark:text-slate-100">Distribuição por status</h2><p className="mt-1 text-xs text-slate-500">Total de registros do período</p></div>
+            <div><h2 className="flex items-center gap-2 text-lg font-semibold text-[#173c2c] dark:text-slate-100"><PieChart className="h-5 w-5 text-[#57D100]"/>Distribuição por status</h2><p className="mt-1 text-xs text-slate-500">Total de registros do período</p></div>
             <StatusDistribution records={records} colors={settings.colors} />
           </section>
         </div>
