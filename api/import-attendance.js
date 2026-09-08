@@ -5,6 +5,7 @@ import {
   listAttendanceDay,
   normalizeAttendanceDay,
 } from './_lib/flash.js';
+import { getConfiguredFlashCompanies, getMissingFlashCompanies } from './_lib/flashCompanies.js';
 
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Fortaleza';
 
@@ -46,14 +47,14 @@ const defaultSettings = {
   adjusted_tolerance: 0,
 };
 
-async function fetchDays(companyId, days) {
+async function fetchDays(company, days) {
   const result = [];
   const concurrency = 5;
   for (let index = 0; index < days.length; index += concurrency) {
     const batch = days.slice(index, index + concurrency);
     const responses = await Promise.all(batch.map(async (day) => ({
       day,
-      attendance: await listAttendanceDay(companyId, day),
+      attendance: await listAttendanceDay(company.id, day),
     })));
     result.push(...responses);
   }
@@ -99,6 +100,15 @@ function findUnknownAttendanceEmployees(dailyPayloads, employees) {
   return [...missing];
 }
 
+const rowsForCompany = (rows, company) => rows.filter((row) => row.flash_company_id === company.id);
+
+const companyFields = (company) => ({
+  flash_company_id: company.id,
+  company_key: company.key,
+  company_name: company.name,
+  company_cnpj: company.cnpj,
+});
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido.' });
 
@@ -125,9 +135,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Selecione um período de até 62 dias.' });
   }
 
-  const companyId = process.env.FLASH_COMPANY_ID;
-  if (!companyId) return res.status(500).json({ stage: 'configuração', error: 'FLASH_COMPANY_ID não configurado.' });
   if (!process.env.FLASH_API_KEY) return res.status(500).json({ stage: 'configuração', error: 'FLASH_API_KEY não configurada.' });
+
+  const missingCompanies = getMissingFlashCompanies();
+  if (missingCompanies.length) {
+    return res.status(500).json({
+      stage: 'configuração das empresas',
+      error: `Faltam Company IDs da Flash no .env: ${missingCompanies.map((company) => company.env).join(', ')}`,
+    });
+  }
+  const companies = getConfiguredFlashCompanies();
 
   let runId = null;
   let supabase = null;
@@ -147,7 +164,6 @@ export default async function handler(req, res) {
     stage = 'autenticação da sessão';
     const { data: authData, error: authError } = await supabase.auth.getUser(token);
     if (authError || !authData?.user) return res.status(401).json({ stage, error: 'Sessão inválida ou expirada.' });
-
     const userId = authData.user.id;
 
     stage = 'carregamento da estrutura sincronizada';
@@ -162,10 +178,11 @@ export default async function handler(req, res) {
     ]);
     if (settingsError) throw settingsError;
 
-    if (!employees.length) {
+    const companiesWithoutStructure = companies.filter((company) => rowsForCompany(employees, company).length === 0);
+    if (companiesWithoutStructure.length) {
       return res.status(409).json({
         stage: 'estrutura da Flash',
-        error: 'A estrutura da Flash ainda não foi sincronizada. Vá em Configurações e use "Sincronizar estrutura da Flash" antes de atualizar os registros.',
+        error: `A estrutura ainda não foi sincronizada para: ${companiesWithoutStructure.map((company) => company.name).join(', ')}. Vá em Configurações e use "Sincronizar estrutura da Flash" antes de atualizar os registros.`,
       });
     }
 
@@ -183,30 +200,47 @@ export default async function handler(req, res) {
     });
     if (runError) throw runError;
 
-    stage = 'consulta das marcações diárias na Flash';
-    const dailyPayloads = await fetchDays(companyId, days);
+    const allRows = [];
+    const companyResults = [];
 
-    stage = 'validação da estrutura sincronizada';
-    const unknownEmployees = findUnknownAttendanceEmployees(dailyPayloads, employees);
-    if (unknownEmployees.length) {
-      throw new Error(`Foram encontradas marcações de ${unknownEmployees.length} colaborador(es) que não existem na estrutura sincronizada. Sincronize a estrutura da Flash em Configurações e tente novamente.`);
+    for (const company of companies) {
+      const companyEmployees = rowsForCompany(employees, company);
+      const companyAllocations = rowsForCompany(allocations, company);
+
+      stage = `consulta das marcações diárias - ${company.name}`;
+      const dailyPayloads = await fetchDays(company, days);
+
+      stage = `validação da estrutura sincronizada - ${company.name}`;
+      const unknownEmployees = findUnknownAttendanceEmployees(dailyPayloads, companyEmployees);
+      if (unknownEmployees.length) {
+        throw new Error(`A empresa ${company.name} possui marcações de ${unknownEmployees.length} colaborador(es) que não existem na estrutura sincronizada. Sincronize a estrutura da Flash em Configurações e tente novamente.`);
+      }
+
+      stage = `normalização previsto x realizado - ${company.name}`;
+      const rows = dailyPayloads.flatMap(({ day, attendance }) => normalizeAttendanceDay({
+        day,
+        attendance,
+        employees: companyEmployees,
+        allocations: companyAllocations,
+        settings,
+        companyId: company.id,
+        userId,
+        importRunId: runId,
+      }).map((row) => ({ ...row, ...companyFields(company) })));
+
+      allRows.push(...rows);
+      companyResults.push({
+        companyKey: company.key,
+        companyName: company.name,
+        recordsProcessed: rows.length,
+        employeesAvailable: companyEmployees.length,
+        schedulesAvailable: companyAllocations.length,
+      });
     }
 
-    stage = 'normalização e comparação previsto x realizado';
-    const rows = dailyPayloads.flatMap(({ day, attendance }) => normalizeAttendanceDay({
-      day,
-      attendance,
-      employees,
-      allocations,
-      settings,
-      companyId,
-      userId,
-      importRunId: runId,
-    }));
-
-    stage = 'gravação dos registros no Supabase';
-    for (let index = 0; index < rows.length; index += 500) {
-      const chunk = rows.slice(index, index + 500);
+    stage = 'gravação dos registros multiempresa no Supabase';
+    for (let index = 0; index < allRows.length; index += 500) {
+      const chunk = allRows.slice(index, index + 500);
       const { error } = await supabase
         .from('attendance_days')
         .upsert(chunk, { onConflict: 'user_id,source_key' });
@@ -229,9 +263,10 @@ export default async function handler(req, res) {
       .from('flash_import_runs')
       .update({
         status: 'completed',
+        companies_processed: companies.length,
         finished_at: finishedAt,
         employees_processed: employees.length,
-        records_processed: rows.length,
+        records_processed: allRows.length,
       })
       .eq('id', runId);
     if (finishError) throw finishError;
@@ -242,9 +277,11 @@ export default async function handler(req, res) {
       startDate,
       endDate: effectiveEndDate,
       requestedEndDate,
+      companiesProcessed: companies.length,
       employeesProcessed: employees.length,
       schedulesAvailable: allocations.length,
-      recordsProcessed: rows.length,
+      recordsProcessed: allRows.length,
+      companies: companyResults,
       finishedAt,
       warnings,
     });
