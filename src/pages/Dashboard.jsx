@@ -9,26 +9,17 @@ import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { DEFAULT_SETTINGS, fetchTodayDashboard, loadAttendanceSettings, STATUS_LABELS } from '@/lib/attendanceService';
 import { TimeRecordStatus } from '@/types';
 
-const StatCard = ({ label, value, icon: Icon, tone }) => {
-  const tones = {
-    neutral: 'bg-slate-100 text-[#0b3154]',
-    green: 'bg-emerald-500 text-white',
-    red: 'bg-red-500 text-white',
-    orange: 'bg-orange-500 text-white',
-    blue: 'bg-blue-500 text-white',
-  };
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="min-h-10 text-sm font-medium text-[#0b3154]">{label}</p>
-      <div className="mt-3 flex items-center gap-4">
-        <span className={`flex h-12 w-12 items-center justify-center rounded-full ${tones[tone]}`}>
-          <Icon className="h-6 w-6" />
-        </span>
-        <strong className="text-3xl font-semibold text-[#0b3154]">{value}</strong>
-      </div>
+const StatCard = ({ label, value, icon: Icon, color = '#065F2F' }) => (
+  <div className="rounded-xl border border-[#dcefcf] bg-white p-5 shadow-sm">
+    <p className="min-h-10 text-sm font-medium text-[#065F2F]">{label}</p>
+    <div className="mt-3 flex items-center gap-4">
+      <span className="flex h-12 w-12 items-center justify-center rounded-full" style={{ color, backgroundColor: `${color}18` }}>
+        <Icon className="h-6 w-6" />
+      </span>
+      <strong className="text-3xl font-semibold text-[#065F2F]">{value}</strong>
     </div>
-  );
-};
+  </div>
+);
 
 const Badge = ({ status, colors }) => {
   if (!status) return <span className="text-slate-400">—</span>;
@@ -74,27 +65,27 @@ const Dashboard = () => {
       <Helmet><title>Dashboard | Controle de Ponto</title></Helmet>
       <Layout>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Dashboard</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-[#065F2F]">Dashboard</h1>
           <span className="text-sm text-slate-500">{format(new Date(), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}</span>
         </div>
 
         <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <StatCard label="Total de colaboradores" value={loading ? '—' : metrics.employees} icon={Users} tone="neutral" />
-          <StatCard label="No horário" value={loading ? '—' : metrics.onTime} icon={Check} tone="green" />
-          <StatCard label="Atrasos" value={loading ? '—' : metrics.late} icon={AlertCircle} tone="red" />
-          <StatCard label="Saída após horário" value={loading ? '—' : metrics.lateExit} icon={Clock3} tone="orange" />
-          <StatCard label="Antecipações" value={loading ? '—' : metrics.early} icon={TimerOff} tone="blue" />
+          <StatCard label="Total de colaboradores" value={loading ? '—' : metrics.employees} icon={Users} color="#065F2F" />
+          <StatCard label="No horário" value={loading ? '—' : metrics.onTime} icon={Check} color={settings.colors[TimeRecordStatus.ON_TIME]} />
+          <StatCard label="Atrasos" value={loading ? '—' : metrics.late} icon={AlertCircle} color={settings.colors[TimeRecordStatus.LATE]} />
+          <StatCard label="Saída após horário" value={loading ? '—' : metrics.lateExit} icon={Clock3} color={settings.colors[TimeRecordStatus.LATE_EXIT]} />
+          <StatCard label="Antecipações" value={loading ? '—' : metrics.early} icon={TimerOff} color={settings.colors[TimeRecordStatus.EARLY]} />
         </div>
 
-        <section className="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
-            <h2 className="text-xl font-semibold text-[#0b3154]">Registros de hoje</h2>
-            <Link to="/registros" className="text-sm font-medium text-blue-600 hover:text-blue-700">Ver todos</Link>
+        <section className="mt-6 overflow-hidden rounded-xl border border-[#dcefcf] bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-[#edf6e7] px-6 py-5">
+            <h2 className="text-xl font-semibold text-[#065F2F]">Registros de hoje</h2>
+            <Link to="/registros" className="text-sm font-medium text-[#2f8f17] hover:text-[#065F2F]">Ver todos</Link>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-sm">
-              <thead className="bg-slate-50 text-left text-slate-600">
+              <thead className="bg-[#f7fbf4] text-left text-slate-600">
                 <tr>
                   <th className="px-6 py-3 font-medium">Colaborador</th>
                   <th className="px-6 py-3 font-medium">Departamento</th>
@@ -105,7 +96,7 @@ const Dashboard = () => {
               </thead>
               <tbody>
                 {!loading && records.slice(0, 8).map((record) => (
-                  <tr key={record.id} className="border-t border-slate-100">
+                  <tr key={record.id} className="border-t border-[#edf6e7]">
                     <td className="px-6 py-3 font-medium text-slate-800">{record.employee_name}</td>
                     <td className="px-6 py-3 text-slate-600">{record.department || '—'}</td>
                     <td className="px-6 py-3 text-slate-700">{record.actual_entry?.slice(0, 5) || '—'}</td>
