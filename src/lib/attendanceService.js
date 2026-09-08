@@ -153,6 +153,19 @@ export async function fetchLatestStructureSync(userId) {
   return data || null;
 }
 
+export async function fetchLatestStructureSyncRun(userId) {
+  if (!userId) return null;
+  const { data, error } = await supabase
+    .from('flash_structure_sync_runs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
 async function authenticatedApiPost(path, body = {}) {
   const { data: { session }, error: sessionError } = await supabase.auth.getSession();
   if (sessionError || !session?.access_token) throw new Error('Sessão expirada. Entre novamente no sistema.');
