@@ -2,10 +2,10 @@ import React from 'react';
 import Sidebar from './Sidebar';
 
 const Layout = ({ children }) => (
-  <div className="min-h-screen bg-[#F8FCF5] text-slate-900">
+  <div className="min-h-screen bg-[#f7faf5] text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
     <Sidebar />
-    <main className="lg:pl-56">
-      <div className="mx-auto w-full max-w-[1500px] p-4 sm:p-6 lg:p-8">
+    <main className="lg:pl-60">
+      <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8">
         {children}
       </div>
     </main>
