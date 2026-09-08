@@ -8,6 +8,8 @@ import {
   normalizeAttendanceDay,
 } from './_lib/flash.js';
 
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Fortaleza';
+
 const getServerClient = () => {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -22,6 +24,21 @@ const getToken = (req) => {
 };
 
 const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '');
+
+const currentDateInAppTimezone = () => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+
+  return `${year}-${month}-${day}`;
+};
 
 const defaultSettings = {
   on_time_tolerance: 5,
@@ -60,7 +77,17 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Período inválido.' });
   }
 
-  const days = dateRange(startDate, endDate);
+  const today = currentDateInAppTimezone();
+  if (startDate > today) {
+    return res.status(400).json({
+      stage: 'validação do período',
+      error: 'Não é possível importar marcações de um período futuro.',
+    });
+  }
+
+  const requestedEndDate = endDate;
+  const effectiveEndDate = endDate > today ? today : endDate;
+  const days = dateRange(startDate, effectiveEndDate);
   if (days.length === 0 || days.length > 62) {
     return res.status(400).json({ error: 'Selecione um período de até 62 dias.' });
   }
@@ -73,6 +100,13 @@ export default async function handler(req, res) {
   let supabase = null;
   let stage = 'configuração do backend';
   const warnings = [];
+
+  if (requestedEndDate !== effectiveEndDate) {
+    warnings.push({
+      code: 'future_days_skipped',
+      message: `O período solicitado terminava em ${requestedEndDate}, mas a Flash não permite consultar datas futuras. A importação foi limitada a ${effectiveEndDate}.`,
+    });
+  }
 
   try {
     supabase = getServerClient();
@@ -89,7 +123,7 @@ export default async function handler(req, res) {
       id: runId,
       user_id: userId,
       start_date: startDate,
-      end_date: endDate,
+      end_date: effectiveEndDate,
       status: 'running',
       started_at: new Date().toISOString(),
     });
@@ -106,7 +140,7 @@ export default async function handler(req, res) {
     let allocations = [];
     stage = 'consulta de escalas na Flash';
     try {
-      allocations = await listTimetableAllocations(companyId, startDate, endDate);
+      allocations = await listTimetableAllocations(companyId, startDate, effectiveEndDate);
     } catch (error) {
       if (!isOptionalTimetableError(error)) throw error;
 
@@ -154,7 +188,7 @@ export default async function handler(req, res) {
       .delete()
       .eq('user_id', userId)
       .gte('work_date', startDate)
-      .lte('work_date', endDate)
+      .lte('work_date', effectiveEndDate)
       .neq('import_run_id', runId);
     if (cleanupError) throw cleanupError;
 
@@ -175,7 +209,8 @@ export default async function handler(req, res) {
       success: true,
       importRunId: runId,
       startDate,
-      endDate,
+      endDate: effectiveEndDate,
+      requestedEndDate,
       employeesProcessed: employees.length,
       recordsProcessed: rows.length,
       finishedAt,
