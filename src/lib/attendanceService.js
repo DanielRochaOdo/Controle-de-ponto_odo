@@ -60,10 +60,11 @@ export async function saveAttendanceSettings(userId, settings) {
   return mapSettings(data);
 }
 
-function applyFilters(query, userId, filters) {
+function applyFilters(query, userId, filters = {}) {
   let next = query.eq('user_id', userId);
   if (filters.startDate) next = next.gte('work_date', filters.startDate);
   if (filters.endDate) next = next.lte('work_date', filters.endDate);
+  if (filters.search?.trim()) next = next.ilike('employee_name', `%${filters.search.trim()}%`);
   if (filters.employee && filters.employee !== 'all') next = next.eq('employee_name', filters.employee);
   if (filters.department && filters.department !== 'all') next = next.eq('department', filters.department);
   if (filters.status && filters.status !== 'all') next = next.or(`entry_status.eq.${filters.status},exit_status.eq.${filters.status}`);
@@ -80,7 +81,7 @@ export async function fetchAttendancePage(userId, filters, page = 1, pageSize = 
   return { records: data || [], count: count || 0 };
 }
 
-export async function fetchAllAttendance(userId, filters) {
+export async function fetchAllAttendance(userId, filters = {}) {
   const result = [];
   const batchSize = 1000;
   let offset = 0;
@@ -123,6 +124,17 @@ export async function fetchLatestImport(userId) {
   const { data, error } = await supabase.from('flash_import_runs').select('*').eq('user_id', userId).eq('status', 'completed').order('finished_at', { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
   return data || null;
+}
+
+export async function fetchImportHistory(userId, limit = 12) {
+  const { data, error } = await supabase
+    .from('flash_import_runs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('started_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data || [];
 }
 
 export async function importAttendanceFromFlash(startDate, endDate) {
