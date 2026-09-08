@@ -64,6 +64,7 @@ function applyFilters(query, userId, filters) {
   let next = query.eq('user_id', userId);
   if (filters.startDate) next = next.gte('work_date', filters.startDate);
   if (filters.endDate) next = next.lte('work_date', filters.endDate);
+  if (filters.company && filters.company !== 'all') next = next.eq('company_name', filters.company);
   if (filters.employee && filters.employee !== 'all') next = next.eq('employee_name', filters.employee);
   if (filters.department && filters.department !== 'all') next = next.eq('department', filters.department);
   if (filters.status && filters.status !== 'all') next = next.or(`entry_status.eq.${filters.status},exit_status.eq.${filters.status}`);
@@ -74,7 +75,7 @@ export async function fetchAttendancePage(userId, filters, page = 1, pageSize = 
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   let query = supabase.from('attendance_days').select('*', { count: 'exact' });
-  query = applyFilters(query, userId, filters).order('work_date', { ascending: false }).order('employee_name').range(from, to);
+  query = applyFilters(query, userId, filters).order('work_date', { ascending: false }).order('company_name').order('employee_name').range(from, to);
   const { data, error, count } = await query;
   if (error) throw error;
   return { records: data || [], count: count || 0 };
@@ -89,6 +90,7 @@ export async function fetchAllAttendance(userId, filters) {
     let query = supabase.from('attendance_days').select('*');
     query = applyFilters(query, userId, filters)
       .order('work_date', { ascending: false })
+      .order('company_name')
       .order('employee_name')
       .range(offset, offset + batchSize - 1);
 
@@ -107,6 +109,7 @@ export async function fetchFilterOptions(userId) {
   const { data, error } = await supabase.rpc('get_attendance_filter_options', { p_user_id: userId });
   if (error) throw error;
   return {
+    companies: data?.companies || [],
     employees: data?.employees || [],
     departments: data?.departments || [],
   };
@@ -114,7 +117,7 @@ export async function fetchFilterOptions(userId) {
 
 export async function fetchTodayDashboard(userId) {
   const today = format(new Date(), 'yyyy-MM-dd');
-  const { data, error } = await supabase.from('attendance_days').select('*').eq('user_id', userId).eq('work_date', today).order('employee_name').limit(1000);
+  const { data, error } = await supabase.from('attendance_days').select('*').eq('user_id', userId).eq('work_date', today).order('company_name').order('employee_name').limit(1000);
   if (error) throw error;
   return data || [];
 }
