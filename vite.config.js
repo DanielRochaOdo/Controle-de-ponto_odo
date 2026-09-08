@@ -2,6 +2,7 @@ import path from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
 import importAttendanceHandler from './api/import-attendance.js';
+import syncFlashStructureHandler from './api/sync-flash-structure.js';
 
 const readJsonBody = (req) => new Promise((resolve, reject) => {
   let body = '';
@@ -26,46 +27,51 @@ const readJsonBody = (req) => new Promise((resolve, reject) => {
   req.on('error', reject);
 });
 
+const createLocalResponse = (res) => {
+  const response = {
+    status(code) {
+      res.statusCode = code;
+      return response;
+    },
+    json(payload) {
+      if (!res.headersSent) {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      }
+      res.end(JSON.stringify(payload));
+      return response;
+    },
+  };
+  return response;
+};
+
+const registerLocalApi = (server, route, handler) => {
+  server.middlewares.use(route, async (req, res) => {
+    if (req.method === 'OPTIONS') {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
+    try {
+      req.body = await readJsonBody(req);
+      await handler(req, createLocalResponse(res));
+      if (!res.writableEnded) res.end();
+    } catch (error) {
+      if (res.writableEnded) return;
+      console.error(`Falha na API local ${route}:`, error);
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ error: error?.message || 'Falha no servidor local.' }));
+    }
+  });
+};
+
 const localApiPlugin = () => ({
   name: 'local-flash-api',
   apply: 'serve',
   configureServer(server) {
-    server.middlewares.use('/api/import-attendance', async (req, res) => {
-      if (req.method === 'OPTIONS') {
-        res.statusCode = 204;
-        res.end();
-        return;
-      }
-
-      try {
-        req.body = await readJsonBody(req);
-
-        const response = {
-          status(code) {
-            res.statusCode = code;
-            return response;
-          },
-          json(payload) {
-            if (!res.headersSent) {
-              res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            }
-            res.end(JSON.stringify(payload));
-            return response;
-          },
-        };
-
-        await importAttendanceHandler(req, response);
-
-        if (!res.writableEnded) {
-          res.end();
-        }
-      } catch (error) {
-        if (res.writableEnded) return;
-        res.statusCode = 500;
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ error: error?.message || 'Falha no servidor local.' }));
-      }
-    });
+    registerLocalApi(server, '/api/import-attendance', importAttendanceHandler);
+    registerLocalApi(server, '/api/sync-flash-structure', syncFlashStructureHandler);
   },
 });
 
