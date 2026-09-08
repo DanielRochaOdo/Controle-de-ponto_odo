@@ -7,106 +7,112 @@ import { useToast } from '@/components/ui/use-toast';
 import {
   DEFAULT_SETTINGS,
   fetchLatestImport,
-  fetchLatestStructureSync,
-  fetchLatestStructureSyncRun,
+  fetchStructureSyncRuns,
   loadAttendanceSettings,
   saveAttendanceSettings,
   STATUS_LABELS,
   syncFlashStructure,
 } from '@/lib/attendanceService';
+import { FLASH_COMPANY_CATALOG, FLASH_SYNC_TARGETS } from '@/lib/flashCompanyCatalog';
 import { TimeRecordStatus } from '@/types';
 
 const STATUSES = [TimeRecordStatus.ON_TIME, TimeRecordStatus.LATE, TimeRecordStatus.LATE_EXIT, TimeRecordStatus.EARLY, TimeRecordStatus.ADJUSTED];
 const PANEL = 'rounded-2xl border border-[#dfe9d7] bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900';
 const FIELD = 'h-11 rounded-xl border border-[#cfe8bc] bg-white px-3 outline-none transition focus:border-[#57D100] focus:ring-2 focus:ring-[#57D100]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100';
 
-const StructureMetric = ({ icon: Icon, label, value }) => (
-  <div className="rounded-xl border border-[#e3edde] bg-[#f8fcf5] p-4 dark:border-slate-800 dark:bg-slate-950/60">
-    <div className="flex items-center gap-3">
-      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#e8f8df] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300">
-        <Icon className="h-5 w-5" />
-      </span>
-      <div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
-        <strong className="mt-0.5 block text-xl text-[#173c2c] dark:text-slate-100">{value}</strong>
-      </div>
-    </div>
-  </div>
-);
-
-const calculateProgress = (run) => {
-  if (!run) return 0;
-  if (run.status === 'completed') return 100;
-
-  const companiesTotal = Number(run.companies_total || 0);
-  if (!companiesTotal) return run.status === 'running' ? 2 : 0;
-
-  if (String(run.current_stage || '').includes('Gravando estrutura')) return 98;
-
-  const companyIndex = Math.max(1, Number(run.current_company_index || 1));
-  const employeesTotal = Number(run.current_company_employees_total || 0);
-  const employeesProcessed = Number(run.current_company_employees_processed || 0);
-  let withinCompany = 0.08;
-
-  if (employeesTotal > 0) {
-    withinCompany = 0.15 + (0.75 * Math.min(1, employeesProcessed / employeesTotal));
-  }
-  if (run.current_stage === 'Empresa concluída') withinCompany = 1;
-
-  return Math.max(1, Math.min(99, Math.round((((companyIndex - 1) + withinCompany) / companiesTotal) * 100)));
+const TARGET_UI = {
+  employees: {
+    icon: Users,
+    description: 'Atualiza admissões, desligamentos e cadastro dos funcionários.',
+    countLabel: (run) => `${run?.employees_processed || 0} funcionário(s)`,
+  },
+  departments: {
+    icon: Building,
+    description: 'Atualiza os cargos/departamentos cadastrados nesta empresa.',
+    countLabel: (run) => `${run?.departments_processed || 0} cargo(s) / departamento(s)`,
+  },
+  schedules: {
+    icon: Clock3,
+    description: 'Consulta os horários de cada funcionário já sincronizado.',
+    countLabel: (run) => `${run?.allocations_processed || 0} alocação(ões) de horário`,
+  },
 };
 
-const SyncProgressPanel = ({ run, pending }) => {
-  const progress = calculateProgress(run);
-  const isFailed = run?.status === 'failed';
-  const companiesTotal = Number(run?.companies_total || 0);
-  const companiesProcessed = Number(run?.companies_processed || 0);
-  const currentIndex = Number(run?.current_company_index || 0);
-  const employeesTotal = Number(run?.current_company_employees_total || 0);
-  const employeesProcessed = Number(run?.current_company_employees_processed || 0);
-  const stage = run?.current_stage || (pending ? 'Iniciando sincronização...' : 'Aguardando progresso');
-  const title = run?.current_company_name || (stage.includes('Gravando') ? 'Todas as empresas consultadas' : 'Preparando empresas');
+const syncKey = (companyKey, target) => `${companyKey}:${target}`;
+
+const isRecentRunning = (run) => {
+  if (run?.status !== 'running') return false;
+  const value = run.progress_updated_at || run.started_at;
+  if (!value) return false;
+  return Date.now() - new Date(value).getTime() < 10 * 60 * 1000;
+};
+
+const SyncAction = ({ company, target, run, activeSync, onSync, dateTime }) => {
+  const meta = TARGET_UI[target];
+  const targetMeta = FLASH_SYNC_TARGETS[target];
+  const Icon = meta.icon;
+  const isThisActive = activeSync?.companyKey === company.key && activeSync?.target === target;
+  const locked = Boolean(activeSync) && !isThisActive;
+  const running = isThisActive || isRecentRunning(run);
+  const failed = run?.status === 'failed' && !running;
+  const completed = run?.status === 'completed';
+  const processed = Number(run?.current_company_employees_processed || 0);
+  const total = Number(run?.current_company_employees_total || 0);
+  const progress = target === 'schedules' && total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : running ? 45 : completed ? 100 : 0;
 
   return (
-    <div className={`mt-6 rounded-2xl border p-5 ${isFailed ? 'border-red-200 bg-red-50/70 dark:border-red-900/60 dark:bg-red-950/20' : 'border-[#cfe8bf] bg-[#f7fcf3] dark:border-emerald-900/60 dark:bg-emerald-950/20'}`}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${isFailed ? 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-300' : 'bg-[#e8f8df] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300'}`}>
-            <RefreshCw className={`h-5 w-5 ${!isFailed && pending ? 'animate-spin' : ''}`} />
-          </span>
-          <div className="min-w-0">
-            <p className={`text-xs font-semibold uppercase tracking-wide ${isFailed ? 'text-red-600 dark:text-red-300' : 'text-[#2f8f17] dark:text-emerald-300'}`}>
-              {isFailed ? 'Sincronização interrompida' : 'Sincronização em andamento'}
-            </p>
-            <h3 className="mt-1 truncate text-base font-semibold text-[#173c2c] dark:text-slate-100">{title}</h3>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{stage}</p>
-          </div>
+    <div className="flex h-full flex-col rounded-2xl border border-[#e2ecdc] bg-[#fbfdf9] p-4 dark:border-slate-800 dark:bg-slate-950/55">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#e9f8e0] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300">
+          <Icon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <h4 className="text-sm font-semibold text-[#173c2c] dark:text-slate-100">{targetMeta.label}</h4>
+          <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{meta.description}</p>
         </div>
-        <strong className={`text-2xl ${isFailed ? 'text-red-600 dark:text-red-300' : 'text-[#2f8f17] dark:text-emerald-300'}`}>{isFailed ? 'Falhou' : `${progress}%`}</strong>
       </div>
 
-      {!isFailed && (
-        <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-[#dcebd4] dark:bg-slate-800">
-          <div className="h-full rounded-full bg-[#57D100] transition-[width] duration-500" style={{ width: `${progress}%` }} />
-        </div>
+      <div className="mt-4 min-h-[48px] rounded-xl bg-white px-3 py-2.5 text-xs dark:bg-slate-900">
+        {running ? (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium text-[#2f8f17] dark:text-emerald-300">{run?.current_stage || 'Iniciando sincronização...'}</span>
+              {target === 'schedules' && total > 0 && <strong className="text-[#173c2c] dark:text-slate-100">{processed}/{total}</strong>}
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#e3eddc] dark:bg-slate-800">
+              <div className="h-full rounded-full bg-[#57D100] transition-[width] duration-500" style={{ width: `${progress}%` }} />
+            </div>
+          </>
+        ) : failed ? (
+          <div>
+            <span className="font-semibold text-red-600 dark:text-red-300">Última tentativa falhou</span>
+            <p className="mt-1 line-clamp-2 text-red-500/90 dark:text-red-300/80">{run?.error_message || 'Falha não detalhada.'}</p>
+          </div>
+        ) : completed ? (
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <span className="block text-slate-500 dark:text-slate-400">Última sincronização</span>
+              <strong className="mt-0.5 block font-medium text-[#173c2c] dark:text-slate-100">{dateTime(run.finished_at)}</strong>
+            </div>
+            <span className="text-right text-[11px] text-slate-400">{meta.countLabel(run)}</span>
+          </div>
+        ) : (
+          <span className="text-slate-400">Ainda não sincronizado.</span>
+        )}
+      </div>
+
+      {target === 'schedules' && (
+        <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">Requer funcionários sincronizados anteriormente nesta empresa.</p>
       )}
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <div className="rounded-xl bg-white/80 px-4 py-3 dark:bg-slate-950/50">
-          <span className="text-xs text-slate-500 dark:text-slate-400">Empresa atual</span>
-          <strong className="mt-1 block text-sm text-[#173c2c] dark:text-slate-100">{currentIndex || '—'} de {companiesTotal || '—'}</strong>
-        </div>
-        <div className="rounded-xl bg-white/80 px-4 py-3 dark:bg-slate-950/50">
-          <span className="text-xs text-slate-500 dark:text-slate-400">Escalas da empresa atual</span>
-          <strong className="mt-1 block text-sm text-[#173c2c] dark:text-slate-100">{employeesTotal > 0 ? `${employeesProcessed} de ${employeesTotal} colaboradores` : 'Aguardando colaboradores'}</strong>
-        </div>
-        <div className="rounded-xl bg-white/80 px-4 py-3 dark:bg-slate-950/50">
-          <span className="text-xs text-slate-500 dark:text-slate-400">Empresas concluídas</span>
-          <strong className="mt-1 block text-sm text-[#173c2c] dark:text-slate-100">{companiesProcessed} de {companiesTotal || '—'}</strong>
-        </div>
-      </div>
-
-      {isFailed && run?.error_message && <p className="mt-4 rounded-xl bg-white/80 px-4 py-3 text-sm text-red-700 dark:bg-slate-950/50 dark:text-red-300">{run.error_message}</p>}
+      <button
+        onClick={() => onSync(company, target)}
+        disabled={locked || running}
+        className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#beddac] bg-white px-3 text-xs font-semibold text-[#2f8f17] transition hover:border-[#57D100] hover:bg-[#f3fced] disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-emerald-300 dark:hover:bg-slate-800"
+      >
+        <RefreshCw className={`h-4 w-4 ${running ? 'animate-spin' : ''}`} />
+        {running ? 'Sincronizando...' : targetMeta.buttonLabel}
+      </button>
     </div>
   );
 };
@@ -114,22 +120,18 @@ const SyncProgressPanel = ({ run, pending }) => {
 const Configuracoes = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState('general');
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [latestImport, setLatestImport] = useState(null);
-  const [structureSync, setStructureSync] = useState(null);
-  const [syncProgress, setSyncProgress] = useState(null);
+  const [syncRuns, setSyncRuns] = useState([]);
   const [saving, setSaving] = useState(false);
-  const [syncingStructure, setSyncingStructure] = useState(false);
+  const [activeSync, setActiveSync] = useState(null);
 
-  const reloadStructureSync = async () => {
-    if (!user) return null;
-    const [completed, latestRun] = await Promise.all([
-      fetchLatestStructureSync(user.id),
-      fetchLatestStructureSyncRun(user.id),
-    ]);
-    setStructureSync(completed);
-    setSyncProgress(latestRun);
-    return completed;
+  const loadSyncRuns = async () => {
+    if (!user) return [];
+    const rows = await fetchStructureSyncRuns(user.id);
+    setSyncRuns(rows);
+    return rows;
   };
 
   useEffect(() => {
@@ -137,38 +139,51 @@ const Configuracoes = () => {
     Promise.all([
       loadAttendanceSettings(user.id),
       fetchLatestImport(user.id),
-      fetchLatestStructureSync(user.id).catch(() => null),
-      fetchLatestStructureSyncRun(user.id).catch(() => null),
+      fetchStructureSyncRuns(user.id).catch(() => []),
     ])
-      .then(([loaded, importRun, latestStructure, latestRun]) => {
+      .then(([loaded, importRun, runs]) => {
         setSettings(loaded);
         setLatestImport(importRun);
-        setStructureSync(latestStructure);
-        setSyncProgress(latestRun);
+        setSyncRuns(runs);
+
+        const running = runs.find((run) => run.company_key && run.sync_target && isRecentRunning(run));
+        if (running) setActiveSync({ companyKey: running.company_key, target: running.sync_target });
       })
       .catch((error) => toast({ title: 'Erro ao carregar configurações', description: error.message, variant: 'destructive' }));
   }, [user]);
 
   useEffect(() => {
-    if (!user || !syncingStructure) return undefined;
+    if (!user || !activeSync) return undefined;
 
     let cancelled = false;
     const refresh = async () => {
       try {
-        const run = await fetchLatestStructureSyncRun(user.id);
-        if (!cancelled && run) setSyncProgress(run);
+        const rows = await fetchStructureSyncRuns(user.id);
+        if (cancelled) return;
+        setSyncRuns(rows);
+        const current = rows.find((run) => run.company_key === activeSync.companyKey && run.sync_target === activeSync.target);
+        if (current && current.status !== 'running') setActiveSync(null);
       } catch (error) {
         console.error('[Sincronização Flash] Falha ao consultar progresso:', error);
       }
     };
 
-    refresh();
     const timer = window.setInterval(refresh, 1000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [user, syncingStructure]);
+  }, [user, activeSync]);
+
+  const latestRuns = useMemo(() => {
+    const map = new Map();
+    syncRuns.forEach((run) => {
+      if (!run.company_key || !run.sync_target) return;
+      const key = syncKey(run.company_key, run.sync_target);
+      if (!map.has(key)) map.set(key, run);
+    });
+    return map;
+  }, [syncRuns]);
 
   const updateTolerance = (status, value) => {
     const number = Math.max(0, Math.min(60, Number(value) || 0));
@@ -186,118 +201,158 @@ const Configuracoes = () => {
       toast({ title: 'Configurações salvas', description: 'Tolerâncias e cores foram atualizadas.' });
     } catch (error) {
       toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleStructureSync = async () => {
-    if (!user) return;
-    setSyncingStructure(true);
-    setSyncProgress(null);
+  const handleSync = async (company, target) => {
+    if (!user || activeSync) return;
+    setActiveSync({ companyKey: company.key, target });
     try {
-      const result = await syncFlashStructure();
-      await reloadStructureSync();
-      const warningText = result.warningCount
-        ? ` ${result.warningCount} colaborador(es) ficaram sem escala e podem precisar de conferência.`
-        : '';
-      toast({
-        title: 'Estrutura da Flash sincronizada',
-        description: `${result.companiesProcessed} empresas, ${result.employeesProcessed} colaboradores, ${result.departmentsProcessed} departamentos e ${result.allocationsProcessed} alocações atualizados.${warningText}`,
-      });
+      const result = await syncFlashStructure(company.key, target);
+      await loadSyncRuns();
+
+      const descriptions = {
+        employees: `${result.employeesProcessed} funcionário(s) atualizado(s).`,
+        departments: `${result.departmentsProcessed} cargo(s) / departamento(s) atualizado(s).`,
+        schedules: `${result.allocationsProcessed} alocação(ões) de horário atualizada(s) para ${result.employeesProcessed} funcionário(s).`,
+      };
+      const warning = result.warningCount ? ` ${result.warningCount} consulta(s) de horário tiveram aviso.` : '';
+      toast({ title: `${company.name} sincronizada`, description: `${descriptions[target]}${warning}` });
     } catch (error) {
-      try {
-        const latestRun = await fetchLatestStructureSyncRun(user.id);
-        if (latestRun) setSyncProgress(latestRun);
-      } catch {
-        // O erro principal da sincronização continua sendo exibido abaixo.
-      }
-      toast({ title: 'Falha na sincronização', description: error.message, variant: 'destructive' });
+      await loadSyncRuns().catch(() => null);
+      toast({ title: `Falha em ${company.name}`, description: error.message, variant: 'destructive' });
     } finally {
-      setSyncingStructure(false);
+      setActiveSync(null);
     }
   };
 
   const dateTime = (value) => value ? new Date(value).toLocaleString('pt-BR') : 'Ainda não disponível';
-  const showProgress = syncingStructure || syncProgress?.status === 'running' || (syncProgress?.status === 'failed' && syncProgress?.id !== structureSync?.id);
-  const progressSummary = useMemo(() => {
-    if (!syncProgress) return null;
-    const updated = syncProgress.progress_updated_at || syncProgress.finished_at || syncProgress.started_at;
-    return updated ? `Último avanço registrado: ${dateTime(updated)}` : null;
-  }, [syncProgress]);
 
   return (
     <>
       <Helmet><title>Configurações | Controle de Ponto</title></Helmet>
       <Layout>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div><h1 className="text-3xl font-semibold tracking-tight text-[#173c2c] dark:text-slate-50">Configurações</h1><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Ajuste tolerâncias, cores e a estrutura cadastral utilizada na comparação dos registros.</p></div>
-          <button onClick={save} disabled={saving} className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#57D100] px-5 font-medium text-[#064E2C] shadow-sm transition hover:bg-[#4cc000] disabled:opacity-60"><Save className="h-5 w-5"/>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
+        <div className="flex flex-col gap-2">
+          <h1 className="text-3xl font-semibold tracking-tight text-[#173c2c] dark:text-slate-50">Configurações</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Gerencie as regras do ponto e as integrações cadastrais da Flash.</p>
         </div>
 
-        <div className="mt-6 grid gap-5 xl:grid-cols-2">
-          <section className={PANEL}>
-            <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Tolerâncias (em minutos)</h2>
-            <div className="mt-6 space-y-4">
-              {STATUSES.map((status) => <div key={status} className="grid grid-cols-[1fr_120px_24px] items-center gap-3"><label htmlFor={`tol-${status}`} className="text-sm font-medium text-slate-700 dark:text-slate-300">{STATUS_LABELS[status]}</label><input id={`tol-${status}`} type="number" min="0" max="60" value={settings.tolerances[status]} onChange={(e) => updateTolerance(status, e.target.value)} className={FIELD}/><span title={status === TimeRecordStatus.ADJUSTED ? 'O status Ajustado vem sinalizado pela origem; o valor é mantido como configuração de referência.' : 'Limite em minutos usado na classificação.'}><Info className="h-4 w-4 text-[#6b8a74] dark:text-slate-500"/></span></div>)}
-            </div>
-          </section>
-
-          <section className={PANEL}>
-            <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Cores dos status</h2>
-            <div className="mt-6 space-y-4">
-              {STATUSES.map((status) => <div key={status} className="grid grid-cols-[1fr_42px_132px] items-center gap-3"><span className="text-sm font-medium text-slate-700 dark:text-slate-300">{STATUS_LABELS[status]}</span><input type="color" value={settings.colors[status]} onChange={(e) => updateColor(status, e.target.value)} className="h-9 w-9 cursor-pointer rounded-full border-0 bg-transparent p-0"/><input value={settings.colors[status]} onChange={(e) => updateColor(status, e.target.value)} className={`${FIELD} font-mono text-sm uppercase`}/></div>)}
-            </div>
-          </section>
+        <div className="mt-6 inline-flex rounded-xl border border-[#dfe9d7] bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <button
+            onClick={() => setActiveTab('general')}
+            className={`rounded-lg px-5 py-2.5 text-sm font-semibold transition ${activeTab === 'general' ? 'bg-[#57D100] text-[#064E2C]' : 'text-slate-500 hover:bg-[#f5faf1] dark:text-slate-400 dark:hover:bg-slate-800'}`}
+          >
+            Geral
+          </button>
+          <button
+            onClick={() => setActiveTab('flash')}
+            className={`rounded-lg px-5 py-2.5 text-sm font-semibold transition ${activeTab === 'flash' ? 'bg-[#57D100] text-[#064E2C]' : 'text-slate-500 hover:bg-[#f5faf1] dark:text-slate-400 dark:hover:bg-slate-800'}`}
+          >
+            Estrutura Flash
+          </button>
         </div>
 
-        <section className={`${PANEL} mt-5`}>
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-            <div className="max-w-3xl">
-              <div className="flex items-center gap-3">
-                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8f8df] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300"><RefreshCw className="h-5 w-5" /></span>
+        {activeTab === 'general' && (
+          <div className="mt-5">
+            <div className="flex justify-end">
+              <button onClick={save} disabled={saving} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#57D100] px-5 text-sm font-semibold text-[#064E2C] shadow-sm transition hover:bg-[#4cc000] disabled:opacity-60">
+                <Save className="h-4 w-4" />
+                {saving ? 'Salvando...' : 'Salvar alterações'}
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-5 xl:grid-cols-2">
+              <section className={PANEL}>
+                <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Tolerâncias (em minutos)</h2>
+                <div className="mt-6 space-y-4">
+                  {STATUSES.map((status) => (
+                    <div key={status} className="grid grid-cols-[1fr_120px_24px] items-center gap-3">
+                      <label htmlFor={`tol-${status}`} className="text-sm font-medium text-slate-700 dark:text-slate-300">{STATUS_LABELS[status]}</label>
+                      <input id={`tol-${status}`} type="number" min="0" max="60" value={settings.tolerances[status]} onChange={(event) => updateTolerance(status, event.target.value)} className={FIELD} />
+                      <span title={status === TimeRecordStatus.ADJUSTED ? 'O status Ajustado vem sinalizado pela origem; o valor é mantido como configuração de referência.' : 'Limite em minutos usado na classificação.'}>
+                        <Info className="h-4 w-4 text-[#6b8a74] dark:text-slate-500" />
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className={PANEL}>
+                <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Cores dos status</h2>
+                <div className="mt-6 space-y-4">
+                  {STATUSES.map((status) => (
+                    <div key={status} className="grid grid-cols-[1fr_42px_132px] items-center gap-3">
+                      <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{STATUS_LABELS[status]}</span>
+                      <input type="color" value={settings.colors[status]} onChange={(event) => updateColor(status, event.target.value)} className="h-9 w-9 cursor-pointer rounded-full border-0 bg-transparent p-0" />
+                      <input value={settings.colors[status]} onChange={(event) => updateColor(status, event.target.value)} className={`${FIELD} font-mono text-sm uppercase`} />
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            <section className={`${PANEL} mt-5`}>
+              <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Informações do sistema</h2>
+              <dl className="mt-5 divide-y divide-[#edf6e7] text-sm dark:divide-slate-800">
+                <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Empresas Flash configuradas</dt><dd className="font-medium text-[#065F2F] dark:text-emerald-300 sm:col-span-2">{FLASH_COMPANY_CATALOG.length} empresas</dd></div>
+                <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última atualização de registros</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(latestImport?.finished_at)}</dd></div>
+                <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última alteração nas configurações</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(settings.updatedAt)}</dd></div>
+              </dl>
+            </section>
+          </div>
+        )}
+
+        {activeTab === 'flash' && (
+          <div className="mt-5">
+            <section className="rounded-2xl border border-[#cfe8bf] bg-[linear-gradient(110deg,#f3fced_0%,#ffffff_70%,#f4fbef_100%)] p-6 shadow-sm dark:border-emerald-900/60 dark:bg-none dark:bg-emerald-950/20">
+              <div className="flex items-start gap-4">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e7f7dc] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300"><RefreshCw className="h-6 w-6" /></span>
                 <div>
-                  <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Estrutura da Flash</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Colaboradores, departamentos e escalas das empresas configuradas, utilizados para comparar horário previsto x realizado.</p>
+                  <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Sincronização por empresa</h2>
+                  <p className="mt-1 max-w-4xl text-sm leading-6 text-[#63796b] dark:text-slate-400">Atualize somente o recurso que realmente mudou. Funcionários, cargos/departamentos e horários são independentes; isso reduz o volume de chamadas à Flash e deixa a manutenção mais previsível.</p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-full bg-white px-3 py-1.5 font-medium text-[#2f8f17] shadow-sm dark:bg-slate-900 dark:text-emerald-300">9 empresas</span>
+                    <span className="rounded-full bg-white px-3 py-1.5 text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">3 ações independentes por empresa</span>
+                    <span className="rounded-full bg-white px-3 py-1.5 text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">Horários usam funcionários já sincronizados</span>
+                  </div>
                 </div>
               </div>
-              <p className="mt-4 text-sm leading-6 text-slate-600 dark:text-slate-400">
-                Esta sincronização é eventual. Execute após admissões, desligamentos, mudança de departamento ou alteração de escala. A atualização dos registros de ponto continua sendo feita separadamente no módulo Registros.
-              </p>
+            </section>
+
+            <div className="mt-5 space-y-4">
+              {FLASH_COMPANY_CATALOG.map((company, index) => (
+                <section key={company.key} className="rounded-2xl border border-[#dfe9d7] bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-4">
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#eef9e7] font-semibold text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300">{String(index + 1).padStart(2, '0')}</span>
+                      <div className="min-w-0">
+                        <h3 className="truncate text-base font-semibold text-[#173c2c] dark:text-slate-100">{company.name}</h3>
+                        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{company.cnpj ? `CNPJ ${company.cnpj}` : 'CNPJ não informado no catálogo local'}</p>
+                      </div>
+                    </div>
+                    <span className="rounded-full bg-[#f0fae9] px-3 py-1.5 text-xs font-medium text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300">Sincronização seletiva</span>
+                  </div>
+
+                  <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                    {['employees', 'departments', 'schedules'].map((target) => (
+                      <SyncAction
+                        key={target}
+                        company={company}
+                        target={target}
+                        run={latestRuns.get(syncKey(company.key, target))}
+                        activeSync={activeSync}
+                        onSync={handleSync}
+                        dateTime={dateTime}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
             </div>
-            <button
-              onClick={handleStructureSync}
-              disabled={syncingStructure}
-              className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#57D100] px-5 font-semibold text-[#064E2C] shadow-sm transition hover:bg-[#4cc000] disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <RefreshCw className={`h-5 w-5 ${syncingStructure ? 'animate-spin' : ''}`} />
-              {syncingStructure ? 'Sincronizando...' : 'Sincronizar estrutura da Flash'}
-            </button>
           </div>
-
-          {showProgress && <SyncProgressPanel run={syncProgress} pending={syncingStructure} />}
-          {showProgress && progressSummary && <p className="mt-2 text-right text-xs text-slate-400">{progressSummary}</p>}
-
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            <StructureMetric icon={Building} label="Empresas" value={structureSync?.companies_processed ?? '—'} />
-            <StructureMetric icon={Users} label="Colaboradores" value={structureSync?.employees_processed ?? '—'} />
-            <StructureMetric icon={Building} label="Departamentos" value={structureSync?.departments_processed ?? '—'} />
-            <StructureMetric icon={Clock3} label="Alocações de escala" value={structureSync?.allocations_processed ?? '—'} />
-            <div className="rounded-xl border border-[#e3edde] bg-[#f8fcf5] p-4 dark:border-slate-800 dark:bg-slate-950/60">
-              <p className="text-xs text-slate-500 dark:text-slate-400">Última sincronização</p>
-              <strong className="mt-2 block text-sm leading-5 text-[#173c2c] dark:text-slate-100">{dateTime(structureSync?.finished_at)}</strong>
-              {structureSync?.warning_count > 0 && <span className="mt-1 block text-xs text-amber-600 dark:text-amber-400">{structureSync.warning_count} aviso(s) de escala</span>}
-            </div>
-          </div>
-        </section>
-
-        <section className={`${PANEL} mt-5`}>
-          <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Informações do sistema</h2>
-          <dl className="mt-5 divide-y divide-[#edf6e7] text-sm dark:divide-slate-800">
-            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Empresas Flash</dt><dd className="font-medium text-[#065F2F] dark:text-emerald-300 sm:col-span-2">{structureSync?.companies_processed ? `${structureSync.companies_processed} empresas sincronizadas` : 'Aguardando sincronização'}</dd></div>
-            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última atualização de registros</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(latestImport?.finished_at)}</dd></div>
-            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última sincronização cadastral</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(structureSync?.finished_at)}</dd></div>
-            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última alteração nas configurações</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(settings.updatedAt)}</dd></div>
-          </dl>
-        </section>
+        )}
       </Layout>
     </>
   );
