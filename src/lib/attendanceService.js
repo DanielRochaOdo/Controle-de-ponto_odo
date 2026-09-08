@@ -139,18 +139,16 @@ export async function fetchImportHistory(userId, limit = 12) {
   return data || [];
 }
 
-export async function fetchLatestStructureSync(userId) {
-  if (!userId) return null;
+export async function fetchStructureSyncRuns(userId, limit = 150) {
+  if (!userId) return [];
   const { data, error } = await supabase
     .from('flash_structure_sync_runs')
     .select('*')
     .eq('user_id', userId)
-    .eq('status', 'completed')
-    .order('finished_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order('started_at', { ascending: false })
+    .limit(limit);
   if (error) throw error;
-  return data || null;
+  return data || [];
 }
 
 export async function fetchLatestStructureSyncRun(userId) {
@@ -201,8 +199,8 @@ async function authenticatedApiPost(path, body = {}) {
   return payload;
 }
 
-export async function syncFlashStructure() {
-  return authenticatedApiPost('/api/sync-flash-structure');
+export async function syncFlashStructure(companyKey, target) {
+  return authenticatedApiPost('/api/sync-flash-structure', { companyKey, target });
 }
 
 export async function importAttendanceFromFlash(startDate, endDate) {
