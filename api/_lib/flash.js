@@ -55,11 +55,17 @@ export async function listEmployees(companyId) {
   return records;
 }
 
-export async function listTimetableAllocations(companyId, startDate, endDate) {
+export async function listDepartments(companyId) {
+  const payload = await flashGet(FLASH_CORE_BASE_URL, 'departments', { companyId });
+  return asArray(payload?.records);
+}
+
+export async function listTimetableAllocations(companyId, startDate, endDate, employeeId = null) {
   const payload = await flashGet(FLASH_ATTENDANCE_BASE_URL, 'timetables/allocations', {
     companyId,
     startDate: `${startDate}T00:00:00.000Z`,
     endDate: `${endDate}T23:59:59.999Z`,
+    employeeId,
   });
   return asArray(payload?.data);
 }
@@ -78,6 +84,22 @@ export function dateRange(startDate, endDate) {
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return result;
+}
+
+export function parseTimetableName(value) {
+  const raw = String(value || '');
+  const times = (raw.match(/(?:[01]?\d|2[0-3]):[0-5]\d/g) || []).map((time) => {
+    const [hour, minute] = time.split(':');
+    return `${hour.padStart(2, '0')}:${minute}`;
+  });
+
+  return {
+    times,
+    entry: times[0] || null,
+    breakStart: times.length >= 4 ? times[1] : null,
+    breakEnd: times.length >= 4 ? times[times.length - 2] : null,
+    exit: times.length >= 2 ? times[times.length - 1] : null,
+  };
 }
 
 const normalizeClock = (value) => {
@@ -169,7 +191,7 @@ function collectScheduleTimes(value, depth = 0, result = []) {
   }
   if (typeof value === 'object') {
     Object.entries(value).forEach(([key, child]) => {
-      if (/^(startDate|endDate|createdAt|updatedAt)$/i.test(key)) return;
+      if (/^(startDate|endDate|createdAt|updatedAt|allocationStartDate|allocation_start_date)$/i.test(key)) return;
       collectScheduleTimes(child, depth + 1, result);
     });
   }
@@ -177,8 +199,8 @@ function collectScheduleTimes(value, depth = 0, result = []) {
 }
 
 function expectedTimesFromValue(value, allowRecursive = true) {
-  const explicitEntry = normalizeClock(pick(value, ['scheduledEntry', 'expectedEntry', 'entryTime', 'startTime', 'workStart']));
-  const explicitExit = normalizeClock(pick(value, ['scheduledExit', 'expectedExit', 'exitTime', 'endTime', 'workEnd']));
+  const explicitEntry = normalizeClock(pick(value, ['scheduledEntry', 'scheduled_entry', 'expectedEntry', 'entryTime', 'startTime', 'workStart']));
+  const explicitExit = normalizeClock(pick(value, ['scheduledExit', 'scheduled_exit', 'expectedExit', 'exitTime', 'endTime', 'workEnd']));
   if (explicitEntry || explicitExit || !allowRecursive) return { entry: explicitEntry, exit: explicitExit };
   const times = [...new Set(collectScheduleTimes(value))].filter(Boolean).sort((a, b) => timeToMinutes(a) - timeToMinutes(b));
   return { entry: times[0] || null, exit: times[times.length - 1] || null };
@@ -186,20 +208,30 @@ function expectedTimesFromValue(value, allowRecursive = true) {
 
 function employeeIdentity(value) {
   return {
-    id: String(pick(value, ['employeeId', 'employee.id', 'employee.employeeId', 'collaboratorId', 'personId']) || ''),
-    externalId: String(pick(value, ['externalId', 'employee.externalId']) || ''),
+    id: String(pick(value, ['employeeId', 'flash_employee_id', 'employee.id', 'employee.employeeId', 'collaboratorId', 'personId']) || ''),
+    externalId: String(pick(value, ['externalId', 'external_id', 'employee.externalId']) || ''),
   };
+}
+
+function allocationStart(allocation) {
+  return String(pick(allocation, ['allocationStartDate', 'allocation_start_date', 'startDate', 'validFrom', 'allocationStart']) || '').slice(0, 10);
 }
 
 function allocationMatches(allocation, employee, day) {
   const identity = employeeIdentity(allocation);
   if (identity.id && identity.id !== employee.id) return false;
   if (!identity.id && identity.externalId && identity.externalId !== employee.externalId) return false;
-  const start = String(pick(allocation, ['startDate', 'validFrom', 'allocationStart']) || '').slice(0, 10);
-  const end = String(pick(allocation, ['endDate', 'validTo', 'allocationEnd']) || '').slice(0, 10);
+  const start = allocationStart(allocation);
+  const end = String(pick(allocation, ['endDate', 'validTo', 'allocationEnd', 'allocation_end_date']) || '').slice(0, 10);
   if (start && day < start) return false;
   if (end && day > end) return false;
   return Boolean(identity.id || identity.externalId);
+}
+
+function findAllocation(allocations, employee, day) {
+  return allocations
+    .filter((candidate) => allocationMatches(candidate, employee, day))
+    .sort((a, b) => allocationStart(b).localeCompare(allocationStart(a)))[0] || null;
 }
 
 function evaluateStatus(expected, actual, settings, { exit = false, adjusted = false } = {}) {
@@ -215,21 +247,32 @@ function evaluateStatus(expected, actual, settings, { exit = false, adjusted = f
   return 'on_time';
 }
 
+function sanitizeAttendance(items) {
+  return items.map((item) => {
+    if (!item || typeof item !== 'object') return item;
+    const { documentNumber, pis, ...safe } = item;
+    return safe;
+  });
+}
+
 export function normalizeAttendanceDay({ day, attendance, employees, allocations, settings, companyId, userId, importRunId }) {
   const employeeById = new Map();
   const employeeByExternalId = new Map();
   employees.forEach((employee) => {
-    if (employee?.id) employeeById.set(String(employee.id), employee);
-    if (employee?.externalId) employeeByExternalId.set(String(employee.externalId), employee);
+    const id = String(employee?.id || employee?.flash_employee_id || '');
+    const externalId = String(employee?.externalId || employee?.external_id || '');
+    if (id) employeeById.set(id, employee);
+    if (externalId) employeeByExternalId.set(externalId, employee);
   });
 
   const grouped = new Map();
   attendance.forEach((item, index) => {
     const identity = employeeIdentity(item);
     const employee = employeeById.get(identity.id) || employeeByExternalId.get(identity.externalId);
-    const employeeId = identity.id || String(employee?.id || '');
-    const externalId = identity.externalId || String(employee?.externalId || '');
-    const fallbackName = String(pick(item, ['employeeName', 'employee.name', 'name']) || employee?.name || `Colaborador ${index + 1}`);
+    const employeeId = identity.id || String(employee?.id || employee?.flash_employee_id || '');
+    const externalId = identity.externalId || String(employee?.externalId || employee?.external_id || '');
+    const employeeName = employee?.name || employee?.employee_name;
+    const fallbackName = String(pick(item, ['employeeName', 'employee.name', 'name']) || employeeName || `Colaborador ${externalId || employeeId || index + 1}`);
     const key = employeeId || externalId || fallbackName;
     if (!grouped.has(key)) grouped.set(key, { employeeId, externalId, employee, items: [], fallbackName });
     grouped.get(key).items.push(item);
@@ -239,19 +282,19 @@ export function normalizeAttendanceDay({ day, attendance, employees, allocations
     const employee = group.employee || {};
     const punches = collectPunches(group.items);
     const first = punches[0] || null;
-    const last = punches.length > 1 ? punches[punches.length - 1] : null;
+    const last = punches.length >= 2 && punches.length % 2 === 0 ? punches[punches.length - 1] : null;
     const attendanceExpected = expectedTimesFromValue(group.items[0], false);
-    const allocation = allocations.find((candidate) => allocationMatches(candidate, {
-      id: group.employeeId || String(employee.id || ''),
-      externalId: group.externalId || String(employee.externalId || ''),
-    }, day));
+    const allocation = findAllocation(allocations, {
+      id: group.employeeId || String(employee.id || employee.flash_employee_id || ''),
+      externalId: group.externalId || String(employee.externalId || employee.external_id || ''),
+    }, day);
     const allocationExpected = expectedTimesFromValue(allocation || {}, true);
     const scheduledEntry = attendanceExpected.entry || allocationExpected.entry;
     const scheduledExit = attendanceExpected.exit || allocationExpected.exit;
     const actualEntry = first?.time || null;
     const actualExit = last?.time || null;
-    const employeeName = employee.name || group.fallbackName;
-    const department = pick(employee, ['departments.0.name', 'department.name', 'department']) || pick(group.items[0], ['departmentName', 'department.name', 'department']) || null;
+    const employeeName = employee.name || employee.employee_name || group.fallbackName;
+    const department = pick(employee, ['departments.0.name', 'department.name', 'department', 'department_name']) || pick(group.items[0], ['departmentName', 'department.name', 'department']) || null;
     const stableEmployeeId = group.employeeId || group.externalId || employeeName;
 
     return {
@@ -268,7 +311,7 @@ export function normalizeAttendanceDay({ day, attendance, employees, allocations
       actual_exit: actualExit,
       entry_status: evaluateStatus(scheduledEntry, actualEntry, settings, { adjusted: first?.adjusted }),
       exit_status: evaluateStatus(scheduledExit, actualExit, settings, { exit: true, adjusted: last?.adjusted }),
-      raw_payload: { attendance: group.items, allocation: allocation || null },
+      raw_payload: { attendance: sanitizeAttendance(group.items), allocation: allocation || null },
       imported_at: new Date().toISOString(),
     };
   });
