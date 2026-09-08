@@ -34,6 +34,8 @@ const StatusBadge = ({ status, colors }) => {
   return <span className="inline-flex min-w-28 justify-center rounded-md px-3 py-1 text-xs font-medium" style={{ color, backgroundColor: `${color}18` }}>{STATUS_LABELS[status] || status}</span>;
 };
 
+const fieldClass = 'h-11 w-full rounded-lg border border-[#cfe8bc] bg-white px-3 outline-none transition focus:border-[#57D100] focus:ring-2 focus:ring-[#57D100]/15';
+
 const Registros = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -135,8 +137,8 @@ const Registros = () => {
         { header: 'Status entrada', key: 'entryStatus', width: 22 },
         { header: 'Status saída', key: 'exitStatus', width: 22 },
       ];
-      worksheet.getRow(1).font = { bold: true };
-      worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF4F8' } };
+      worksheet.getRow(1).font = { bold: true, color: { argb: 'FF065F2F' } };
+      worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFFBE8' } };
 
       allRecords.forEach((record) => {
         const row = worksheet.addRow({
@@ -183,44 +185,44 @@ const Registros = () => {
       <Layout>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Registros</h1>
+            <h1 className="text-3xl font-semibold tracking-tight text-[#065F2F]">Registros</h1>
             <p className="mt-1 text-sm text-slate-500">Consulte, filtre e exporte os registros de ponto.</p>
           </div>
-          <button onClick={handleImport} disabled={importing} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#0d4d82] px-5 font-medium text-white shadow-sm transition hover:bg-[#0b426f] disabled:opacity-60">
+          <button onClick={handleImport} disabled={importing} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#57D100] px-5 font-medium text-[#064E2C] shadow-sm transition hover:bg-[#4cc000] disabled:opacity-60">
             <RefreshCw className={`h-5 w-5 ${importing ? 'animate-spin' : ''}`} />
             {importing ? 'Atualizando...' : 'Atualizar dados da Flash'}
           </button>
         </div>
 
-        <section className="mt-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="mt-6 rounded-xl border border-[#dcefcf] bg-white p-5 shadow-sm">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <label className="xl:col-span-2"><span className="mb-2 block text-sm font-medium">Período</span><div className="flex items-center gap-2"><input type="date" value={filters.startDate} onChange={(e) => setFilters((old) => ({ ...old, startDate: e.target.value }))} className="h-11 min-w-0 flex-1 rounded-lg border border-slate-300 px-3"/><span className="text-sm text-slate-400">até</span><input type="date" value={filters.endDate} onChange={(e) => setFilters((old) => ({ ...old, endDate: e.target.value }))} className="h-11 min-w-0 flex-1 rounded-lg border border-slate-300 px-3"/></div></label>
-            <label><span className="mb-2 block text-sm font-medium">Colaborador</span><select value={filters.employee} onChange={(e) => setFilters((old) => ({ ...old, employee: e.target.value }))} className="h-11 w-full rounded-lg border border-slate-300 bg-white px-3"><option value="all">Todos</option>{options.employees.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-            <label><span className="mb-2 block text-sm font-medium">Departamento</span><select value={filters.department} onChange={(e) => setFilters((old) => ({ ...old, department: e.target.value }))} className="h-11 w-full rounded-lg border border-slate-300 bg-white px-3"><option value="all">Todos</option>{options.departments.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-            <label><span className="mb-2 block text-sm font-medium">Status</span><select value={filters.status} onChange={(e) => setFilters((old) => ({ ...old, status: e.target.value }))} className="h-11 w-full rounded-lg border border-slate-300 bg-white px-3"><option value="all">Todos</option>{STATUS_OPTIONS.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}</select></label>
+            <label className="xl:col-span-2"><span className="mb-2 block text-sm font-medium text-[#365b42]">Período</span><div className="flex items-center gap-2"><input type="date" value={filters.startDate} onChange={(e) => setFilters((old) => ({ ...old, startDate: e.target.value }))} className={`${fieldClass} min-w-0 flex-1`}/><span className="text-sm text-slate-400">até</span><input type="date" value={filters.endDate} onChange={(e) => setFilters((old) => ({ ...old, endDate: e.target.value }))} className={`${fieldClass} min-w-0 flex-1`}/></div></label>
+            <label><span className="mb-2 block text-sm font-medium text-[#365b42]">Colaborador</span><select value={filters.employee} onChange={(e) => setFilters((old) => ({ ...old, employee: e.target.value }))} className={fieldClass}><option value="all">Todos</option>{options.employees.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+            <label><span className="mb-2 block text-sm font-medium text-[#365b42]">Departamento</span><select value={filters.department} onChange={(e) => setFilters((old) => ({ ...old, department: e.target.value }))} className={fieldClass}><option value="all">Todos</option>{options.departments.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+            <label><span className="mb-2 block text-sm font-medium text-[#365b42]">Status</span><select value={filters.status} onChange={(e) => setFilters((old) => ({ ...old, status: e.target.value }))} className={fieldClass}><option value="all">Todos</option>{STATUS_OPTIONS.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}</select></label>
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button onClick={applyFilters} className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#0d4d82] px-5 font-medium text-white"><Search className="h-4 w-4"/>Buscar</button>
-            <button onClick={clearFilters} className="h-11 rounded-lg border border-slate-300 px-5 font-medium text-slate-600 hover:bg-slate-50">Limpar filtros</button>
-            <button onClick={handleExport} disabled={exporting || count === 0} className="ml-auto inline-flex h-11 items-center gap-2 rounded-lg bg-slate-100 px-5 font-medium text-[#0b3154] hover:bg-slate-200 disabled:opacity-50"><Download className="h-5 w-5"/>{exporting ? 'Exportando...' : 'Exportar Excel'}</button>
+            <button onClick={applyFilters} className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#57D100] px-5 font-medium text-[#064E2C] transition hover:bg-[#4cc000]"><Search className="h-4 w-4"/>Buscar</button>
+            <button onClick={clearFilters} className="h-11 rounded-lg border border-[#cfe8bc] px-5 font-medium text-[#4b6c56] transition hover:bg-[#f4faef]">Limpar filtros</button>
+            <button onClick={handleExport} disabled={exporting || count === 0} className="ml-auto inline-flex h-11 items-center gap-2 rounded-lg bg-[#EFFBE8] px-5 font-medium text-[#065F2F] transition hover:bg-[#DDF5CD] disabled:opacity-50"><Download className="h-5 w-5"/>{exporting ? 'Exportando...' : 'Exportar Excel'}</button>
           </div>
         </section>
 
-        <section className="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-5 py-4"><strong className="text-[#0b3154]">{count.toLocaleString('pt-BR')} registros encontrados</strong></div>
+        <section className="mt-5 overflow-hidden rounded-xl border border-[#dcefcf] bg-white shadow-sm">
+          <div className="border-b border-[#edf6e7] px-5 py-4"><strong className="text-[#065F2F]">{count.toLocaleString('pt-BR')} registros encontrados</strong></div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1050px] text-sm">
-              <thead className="bg-slate-50 text-left text-slate-600"><tr><th className="px-5 py-3">Data</th><th className="px-5 py-3">Colaborador</th><th className="px-5 py-3">Departamento</th><th className="px-5 py-3">Entrada prevista</th><th className="px-5 py-3">Entrada real</th><th className="px-5 py-3">Saída prevista</th><th className="px-5 py-3">Saída real</th><th className="px-5 py-3">Status entrada</th><th className="px-5 py-3">Status saída</th></tr></thead>
+              <thead className="bg-[#f7fbf4] text-left text-slate-600"><tr><th className="px-5 py-3">Data</th><th className="px-5 py-3">Colaborador</th><th className="px-5 py-3">Departamento</th><th className="px-5 py-3">Entrada prevista</th><th className="px-5 py-3">Entrada real</th><th className="px-5 py-3">Saída prevista</th><th className="px-5 py-3">Saída real</th><th className="px-5 py-3">Status entrada</th><th className="px-5 py-3">Status saída</th></tr></thead>
               <tbody>
-                {!loading && records.map((record) => <tr key={record.id} className="border-t border-slate-100"><td className="px-5 py-3">{formatDate(record.work_date)}</td><td className="px-5 py-3 font-medium text-slate-800">{record.employee_name}</td><td className="px-5 py-3 text-slate-600">{record.department || '—'}</td><td className="px-5 py-3">{formatTime(record.scheduled_entry)}</td><td className="px-5 py-3">{formatTime(record.actual_entry)}</td><td className="px-5 py-3">{formatTime(record.scheduled_exit)}</td><td className="px-5 py-3">{formatTime(record.actual_exit)}</td><td className="px-5 py-3"><StatusBadge status={record.entry_status} colors={settings.colors}/></td><td className="px-5 py-3"><StatusBadge status={record.exit_status} colors={settings.colors}/></td></tr>)}
+                {!loading && records.map((record) => <tr key={record.id} className="border-t border-[#edf6e7]"><td className="px-5 py-3">{formatDate(record.work_date)}</td><td className="px-5 py-3 font-medium text-slate-800">{record.employee_name}</td><td className="px-5 py-3 text-slate-600">{record.department || '—'}</td><td className="px-5 py-3">{formatTime(record.scheduled_entry)}</td><td className="px-5 py-3">{formatTime(record.actual_entry)}</td><td className="px-5 py-3">{formatTime(record.scheduled_exit)}</td><td className="px-5 py-3">{formatTime(record.actual_exit)}</td><td className="px-5 py-3"><StatusBadge status={record.entry_status} colors={settings.colors}/></td><td className="px-5 py-3"><StatusBadge status={record.exit_status} colors={settings.colors}/></td></tr>)}
                 {!loading && records.length === 0 && <tr><td colSpan="9" className="px-5 py-14 text-center text-slate-400">Nenhum registro encontrado para os filtros selecionados.</td></tr>}
                 {loading && <tr><td colSpan="9" className="px-5 py-14 text-center text-slate-400">Carregando...</td></tr>}
               </tbody>
             </table>
           </div>
-          <div className="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 border-t border-[#edf6e7] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-slate-500">Exibindo {count === 0 ? 0 : (page - 1) * PAGE_SIZE + 1} a {Math.min(page * PAGE_SIZE, count)} de {count.toLocaleString('pt-BR')} registros</span>
-            <div className="flex items-center gap-1"><button disabled={page === 1} onClick={() => setPage((value) => value - 1)} className="h-9 rounded-md border px-3 disabled:opacity-40">‹</button>{pageItems.map((value) => <button key={value} onClick={() => setPage(value)} className={`h-9 min-w-9 rounded-md border px-3 ${value === page ? 'border-blue-600 bg-blue-600 text-white' : 'bg-white'}`}>{value}</button>)}<button disabled={page === totalPages} onClick={() => setPage((value) => value + 1)} className="h-9 rounded-md border px-3 disabled:opacity-40">›</button></div>
+            <div className="flex items-center gap-1"><button disabled={page === 1} onClick={() => setPage((value) => value - 1)} className="h-9 rounded-md border border-[#cfe8bc] px-3 disabled:opacity-40">‹</button>{pageItems.map((value) => <button key={value} onClick={() => setPage(value)} className={`h-9 min-w-9 rounded-md border px-3 ${value === page ? 'border-[#57D100] bg-[#57D100] font-medium text-[#064E2C]' : 'border-[#cfe8bc] bg-white'}`}>{value}</button>)}<button disabled={page === totalPages} onClick={() => setPage((value) => value + 1)} className="h-9 rounded-md border border-[#cfe8bc] px-3 disabled:opacity-40">›</button></div>
           </div>
         </section>
       </Layout>
