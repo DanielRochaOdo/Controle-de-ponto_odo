@@ -45,6 +45,10 @@ async function fetchDays(companyId, days) {
   return result;
 }
 
+const isOptionalTimetableError = (error) => (
+  Number(error?.status) === 400 && /user not found/i.test(String(error?.message || ''))
+);
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido.' });
 
@@ -68,6 +72,7 @@ export default async function handler(req, res) {
   let runId = null;
   let supabase = null;
   let stage = 'configuração do backend';
+  const warnings = [];
 
   try {
     supabase = getServerClient();
@@ -90,14 +95,34 @@ export default async function handler(req, res) {
     });
     if (runError) throw runError;
 
-    stage = 'consulta de colaboradores e escalas na Flash';
-    const [{ data: settingsRow, error: settingsError }, employees, allocations] = await Promise.all([
+    stage = 'consulta de configurações e colaboradores';
+    const [{ data: settingsRow, error: settingsError }, employees] = await Promise.all([
       supabase.from('attendance_settings').select('*').eq('user_id', userId).maybeSingle(),
       listEmployees(companyId),
-      listTimetableAllocations(companyId, startDate, endDate),
     ]);
     if (settingsError) throw settingsError;
     const settings = { ...defaultSettings, ...(settingsRow || {}) };
+
+    let allocations = [];
+    stage = 'consulta de escalas na Flash';
+    try {
+      allocations = await listTimetableAllocations(companyId, startDate, endDate);
+    } catch (error) {
+      if (!isOptionalTimetableError(error)) throw error;
+
+      warnings.push({
+        code: 'timetable_unavailable',
+        message: 'A Flash respondeu "User not found" ao consultar alocações de escala sem employeeId. A importação seguirá apenas com as marcações de ponto.',
+        flashStatus: error?.status || null,
+        flashEndpoint: error?.endpoint || null,
+        flashRequestId: error?.requestId || null,
+      });
+      console.warn('Flash: consulta de escalas ignorada; importação seguirá com attendance/day.', {
+        status: error?.status,
+        endpoint: error?.endpoint,
+        requestId: error?.requestId,
+      });
+    }
 
     stage = 'consulta das marcações diárias na Flash';
     const dailyPayloads = await fetchDays(companyId, days);
@@ -154,6 +179,7 @@ export default async function handler(req, res) {
       employeesProcessed: employees.length,
       recordsProcessed: rows.length,
       finishedAt,
+      warnings,
     });
   } catch (error) {
     console.error(`Falha na importação Flash [${stage}]:`, error);
