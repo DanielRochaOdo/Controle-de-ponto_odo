@@ -1,27 +1,66 @@
 import React, { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet';
-import { Info, Save } from 'lucide-react';
+import { Building, Clock3, Info, RefreshCw, Save, Users } from 'lucide-react';
 import Layout from '@/components/layout/Layout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
-import { DEFAULT_SETTINGS, fetchLatestImport, loadAttendanceSettings, saveAttendanceSettings, STATUS_LABELS } from '@/lib/attendanceService';
+import {
+  DEFAULT_SETTINGS,
+  fetchLatestImport,
+  fetchLatestStructureSync,
+  loadAttendanceSettings,
+  saveAttendanceSettings,
+  STATUS_LABELS,
+  syncFlashStructure,
+} from '@/lib/attendanceService';
 import { TimeRecordStatus } from '@/types';
 
 const STATUSES = [TimeRecordStatus.ON_TIME, TimeRecordStatus.LATE, TimeRecordStatus.LATE_EXIT, TimeRecordStatus.EARLY, TimeRecordStatus.ADJUSTED];
 const PANEL = 'rounded-2xl border border-[#dfe9d7] bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900';
 const FIELD = 'h-11 rounded-xl border border-[#cfe8bc] bg-white px-3 outline-none transition focus:border-[#57D100] focus:ring-2 focus:ring-[#57D100]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100';
 
+const StructureMetric = ({ icon: Icon, label, value }) => (
+  <div className="rounded-xl border border-[#e3edde] bg-[#f8fcf5] p-4 dark:border-slate-800 dark:bg-slate-950/60">
+    <div className="flex items-center gap-3">
+      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#e8f8df] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300">
+        <Icon className="h-5 w-5" />
+      </span>
+      <div>
+        <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
+        <strong className="mt-0.5 block text-xl text-[#173c2c] dark:text-slate-100">{value}</strong>
+      </div>
+    </div>
+  </div>
+);
+
 const Configuracoes = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [latestImport, setLatestImport] = useState(null);
+  const [structureSync, setStructureSync] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [syncingStructure, setSyncingStructure] = useState(false);
+
+  const reloadStructureSync = async () => {
+    if (!user) return null;
+    const data = await fetchLatestStructureSync(user.id);
+    setStructureSync(data);
+    return data;
+  };
 
   useEffect(() => {
     if (!user) return;
-    Promise.all([loadAttendanceSettings(user.id), fetchLatestImport(user.id)])
-      .then(([loaded, importRun]) => { setSettings(loaded); setLatestImport(importRun); })
+    Promise.all([
+      loadAttendanceSettings(user.id),
+      fetchLatestImport(user.id),
+      fetchLatestStructureSync(user.id).catch(() => null),
+    ])
+      .then(([loaded, importRun, latestStructure]) => {
+        setSettings(loaded);
+        setLatestImport(importRun);
+        setStructureSync(latestStructure);
+      })
       .catch((error) => toast({ title: 'Erro ao carregar configurações', description: error.message, variant: 'destructive' }));
   }, [user]);
 
@@ -44,6 +83,26 @@ const Configuracoes = () => {
     } finally { setSaving(false); }
   };
 
+  const handleStructureSync = async () => {
+    if (!user) return;
+    setSyncingStructure(true);
+    try {
+      const result = await syncFlashStructure();
+      await reloadStructureSync();
+      const warningText = result.warningCount
+        ? ` ${result.warningCount} colaborador(es) ficaram sem escala e podem precisar de conferência.`
+        : '';
+      toast({
+        title: 'Estrutura da Flash sincronizada',
+        description: `${result.employeesProcessed} colaboradores, ${result.departmentsProcessed} departamentos e ${result.allocationsProcessed} alocações atualizados.${warningText}`,
+      });
+    } catch (error) {
+      toast({ title: 'Falha na sincronização', description: error.message, variant: 'destructive' });
+    } finally {
+      setSyncingStructure(false);
+    }
+  };
+
   const dateTime = (value) => value ? new Date(value).toLocaleString('pt-BR') : 'Ainda não disponível';
 
   return (
@@ -51,7 +110,7 @@ const Configuracoes = () => {
       <Helmet><title>Configurações | Controle de Ponto</title></Helmet>
       <Layout>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div><h1 className="text-3xl font-semibold tracking-tight text-[#173c2c] dark:text-slate-50">Configurações</h1><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Ajuste as tolerâncias e as cores dos status.</p></div>
+          <div><h1 className="text-3xl font-semibold tracking-tight text-[#173c2c] dark:text-slate-50">Configurações</h1><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Ajuste tolerâncias, cores e a estrutura cadastral utilizada na comparação dos registros.</p></div>
           <button onClick={save} disabled={saving} className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#57D100] px-5 font-medium text-[#064E2C] shadow-sm transition hover:bg-[#4cc000] disabled:opacity-60"><Save className="h-5 w-5"/>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
         </div>
 
@@ -72,10 +131,47 @@ const Configuracoes = () => {
         </div>
 
         <section className={`${PANEL} mt-5`}>
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl">
+              <div className="flex items-center gap-3">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8f8df] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300"><RefreshCw className="h-5 w-5" /></span>
+                <div>
+                  <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Estrutura da Flash</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Colaboradores, departamentos e escalas utilizados para comparar horário previsto x realizado.</p>
+                </div>
+              </div>
+              <p className="mt-4 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                Esta sincronização é eventual. Execute após admissões, desligamentos, mudança de departamento ou alteração de escala. A atualização dos registros de ponto continua sendo feita separadamente no módulo Registros.
+              </p>
+            </div>
+            <button
+              onClick={handleStructureSync}
+              disabled={syncingStructure}
+              className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#57D100] px-5 font-semibold text-[#064E2C] shadow-sm transition hover:bg-[#4cc000] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw className={`h-5 w-5 ${syncingStructure ? 'animate-spin' : ''}`} />
+              {syncingStructure ? 'Sincronizando...' : 'Sincronizar estrutura da Flash'}
+            </button>
+          </div>
+
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <StructureMetric icon={Users} label="Colaboradores" value={structureSync?.employees_processed ?? '—'} />
+            <StructureMetric icon={Building} label="Departamentos" value={structureSync?.departments_processed ?? '—'} />
+            <StructureMetric icon={Clock3} label="Alocações de escala" value={structureSync?.allocations_processed ?? '—'} />
+            <div className="rounded-xl border border-[#e3edde] bg-[#f8fcf5] p-4 dark:border-slate-800 dark:bg-slate-950/60">
+              <p className="text-xs text-slate-500 dark:text-slate-400">Última sincronização</p>
+              <strong className="mt-2 block text-sm leading-5 text-[#173c2c] dark:text-slate-100">{dateTime(structureSync?.finished_at)}</strong>
+              {structureSync?.warning_count > 0 && <span className="mt-1 block text-xs text-amber-600 dark:text-amber-400">{structureSync.warning_count} aviso(s) de escala</span>}
+            </div>
+          </div>
+        </section>
+
+        <section className={`${PANEL} mt-5`}>
           <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Informações do sistema</h2>
           <dl className="mt-5 divide-y divide-[#edf6e7] text-sm dark:divide-slate-800">
             <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Empresa</dt><dd className="font-medium text-[#065F2F] dark:text-emerald-300 sm:col-span-2">Odontoart</dd></div>
-            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última atualização da Flash</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(latestImport?.finished_at)}</dd></div>
+            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última atualização de registros</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(latestImport?.finished_at)}</dd></div>
+            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última sincronização cadastral</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(structureSync?.finished_at)}</dd></div>
             <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última alteração nas configurações</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(settings.updatedAt)}</dd></div>
           </dl>
         </section>
