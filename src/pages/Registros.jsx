@@ -5,8 +5,8 @@ import {
   Check,
   Clock3,
   Download,
-  Edit3,
   FileText,
+  Pencil,
   RefreshCw,
   Search,
   Settings,
@@ -303,7 +303,7 @@ const Registros = () => {
           <MetricCard icon={Clock3} label="No horário" value={metrics.onTime.toLocaleString('pt-BR')} helper={metrics.percentage(metrics.onTime)} color={settings.colors[TimeRecordStatus.ON_TIME]} />
           <MetricCard icon={AlertCircle} label="Atrasados" value={metrics.late.toLocaleString('pt-BR')} helper={metrics.percentage(metrics.late)} color={settings.colors[TimeRecordStatus.LATE]} />
           <MetricCard icon={RefreshCw} label="Saída após horário" value={metrics.lateExit.toLocaleString('pt-BR')} helper={metrics.percentage(metrics.lateExit)} color={settings.colors[TimeRecordStatus.LATE_EXIT]} />
-          <MetricCard icon={Edit3} label="Ajustados" value={metrics.adjusted.toLocaleString('pt-BR')} helper={metrics.percentage(metrics.adjusted)} color={settings.colors[TimeRecordStatus.ADJUSTED]} />
+          <MetricCard icon={Pencil} label="Ajustados" value={metrics.adjusted.toLocaleString('pt-BR')} helper={metrics.percentage(metrics.adjusted)} color={settings.colors[TimeRecordStatus.ADJUSTED]} />
         </div>
 
         <section className={`${CARD} mt-4 overflow-hidden`}>
