@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { FileText, LayoutDashboard, LogOut, Menu, Settings, X } from 'lucide-react';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { ODONTOART_LOGO } from '@/lib/brand';
 
 const items = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
@@ -10,9 +11,8 @@ const items = [
 ];
 
 const Brand = () => (
-  <div className="flex flex-col items-center text-white">
-    <span className="text-[27px] font-light tracking-tight leading-none">Odontoart</span>
-    <span className="mt-1 h-3 w-16 rounded-b-full border-b-[3px] border-white/90" />
+  <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
+    <img src={ODONTOART_LOGO} alt="Odontoart" className="h-12 w-auto max-w-[170px] object-contain" />
   </div>
 );
 
@@ -22,7 +22,7 @@ const Sidebar = () => {
   const [open, setOpen] = useState(false);
 
   const nav = (
-    <div className="flex h-full flex-col bg-[#0b3154] text-white">
+    <div className="flex h-full flex-col bg-[#065F2F] text-white">
       <div className="flex h-28 items-center justify-center border-b border-white/10 px-5">
         <Brand />
       </div>
@@ -36,7 +36,7 @@ const Sidebar = () => {
               to={path}
               onClick={() => setOpen(false)}
               className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition ${
-                active ? 'bg-[#17558a] text-white shadow-sm' : 'text-white/85 hover:bg-white/10 hover:text-white'
+                active ? 'bg-[#57D100] text-[#064E2C] shadow-sm' : 'text-white/85 hover:bg-white/10 hover:text-white'
               }`}
             >
               <Icon className="h-5 w-5" />
@@ -46,7 +46,7 @@ const Sidebar = () => {
         })}
       </nav>
 
-      <div className="p-4">
+      <div className="border-t border-white/10 p-4">
         <button
           type="button"
           onClick={signOut}
@@ -61,7 +61,7 @@ const Sidebar = () => {
 
   return (
     <>
-      <header className="flex h-16 items-center justify-between bg-[#0b3154] px-4 text-white lg:hidden">
+      <header className="flex h-20 items-center justify-between bg-[#065F2F] px-4 text-white lg:hidden">
         <Brand />
         <button type="button" onClick={() => setOpen((value) => !value)} className="rounded-lg p-2 hover:bg-white/10">
           {open ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
