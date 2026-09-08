@@ -14,22 +14,25 @@ export const AuthProvider = ({ children }) => {
 
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(isSupabaseConfigured);
 
   const clearAuthData = useCallback(() => {
     const keys = Object.keys(localStorage);
-    keys.forEach(key => {
+    keys.forEach((key) => {
       if (key.startsWith('sb-') && key.includes('auth-token')) {
         localStorage.removeItem(key);
       }
     });
     setSession(null);
     setUser(null);
+    setProfile(null);
   }, []);
 
   const handleSession = useCallback(async (nextSession) => {
     setSession(nextSession);
     setUser(nextSession?.user ?? null);
+    if (!nextSession?.user) setProfile(null);
     setLoading(false);
   }, []);
 
@@ -64,9 +67,7 @@ export const AuthProvider = ({ children }) => {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, nextSession) => {
-        if (event === 'TOKEN_REFRESHED' && !nextSession) {
-          clearAuthData();
-        }
+        if (event === 'TOKEN_REFRESHED' && !nextSession) clearAuthData();
         handleSession(nextSession);
       }
     );
@@ -74,14 +75,41 @@ export const AuthProvider = ({ children }) => {
     return () => subscription.unsubscribe();
   }, [handleSession, clearAuthData]);
 
+  useEffect(() => {
+    if (!user?.id || !isSupabaseConfigured) {
+      setProfile(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadProfile = async () => {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('display_name')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        // A ausência da migration de perfil nunca deve impedir autenticação.
+        console.warn('User profile unavailable:', error.message);
+        setProfile(null);
+        return;
+      }
+
+      setProfile(data || null);
+    };
+
+    loadProfile();
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
   const signUp = useCallback(async (email, password, options) => {
     if (!isSupabaseConfigured) return { error: missingSupabaseError() };
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options,
-    });
+    const { error } = await supabase.auth.signUp({ email, password, options });
 
     if (error) {
       toast({
@@ -96,12 +124,7 @@ export const AuthProvider = ({ children }) => {
 
   const signIn = useCallback(async (email, password) => {
     if (!isSupabaseConfigured) return { error: missingSupabaseError() };
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error };
   }, []);
 
@@ -123,23 +146,28 @@ export const AuthProvider = ({ children }) => {
     return { error: null };
   }, [clearAuthData]);
 
+  const displayName = profile?.display_name
+    || user?.user_metadata?.name
+    || user?.email?.split('@')[0]
+    || 'Usuário';
+
   const value = useMemo(() => ({
     user,
     session,
+    profile,
+    displayName,
     loading,
     isSupabaseConfigured,
     signUp,
     signIn,
     signOut,
-  }), [user, session, loading, signUp, signIn, signOut]);
+  }), [user, session, profile, displayName, loading, signUp, signIn, signOut]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (context === undefined) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };
