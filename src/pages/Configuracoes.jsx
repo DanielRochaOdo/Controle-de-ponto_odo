@@ -94,7 +94,7 @@ const Configuracoes = () => {
         : '';
       toast({
         title: 'Estrutura da Flash sincronizada',
-        description: `${result.employeesProcessed} colaboradores, ${result.departmentsProcessed} departamentos e ${result.allocationsProcessed} alocações atualizados.${warningText}`,
+        description: `${result.companiesProcessed} empresas, ${result.employeesProcessed} colaboradores, ${result.departmentsProcessed} departamentos e ${result.allocationsProcessed} alocações atualizados.${warningText}`,
       });
     } catch (error) {
       toast({ title: 'Falha na sincronização', description: error.message, variant: 'destructive' });
@@ -137,7 +137,7 @@ const Configuracoes = () => {
                 <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e8f8df] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300"><RefreshCw className="h-5 w-5" /></span>
                 <div>
                   <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Estrutura da Flash</h2>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Colaboradores, departamentos e escalas utilizados para comparar horário previsto x realizado.</p>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Colaboradores, departamentos e escalas das empresas configuradas, utilizados para comparar horário previsto x realizado.</p>
                 </div>
               </div>
               <p className="mt-4 text-sm leading-6 text-slate-600 dark:text-slate-400">
@@ -154,7 +154,8 @@ const Configuracoes = () => {
             </button>
           </div>
 
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <StructureMetric icon={Building} label="Empresas" value={structureSync?.companies_processed ?? '—'} />
             <StructureMetric icon={Users} label="Colaboradores" value={structureSync?.employees_processed ?? '—'} />
             <StructureMetric icon={Building} label="Departamentos" value={structureSync?.departments_processed ?? '—'} />
             <StructureMetric icon={Clock3} label="Alocações de escala" value={structureSync?.allocations_processed ?? '—'} />
@@ -169,7 +170,7 @@ const Configuracoes = () => {
         <section className={`${PANEL} mt-5`}>
           <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Informações do sistema</h2>
           <dl className="mt-5 divide-y divide-[#edf6e7] text-sm dark:divide-slate-800">
-            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Empresa</dt><dd className="font-medium text-[#065F2F] dark:text-emerald-300 sm:col-span-2">Odontoart</dd></div>
+            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Empresas Flash</dt><dd className="font-medium text-[#065F2F] dark:text-emerald-300 sm:col-span-2">{structureSync?.companies_processed ? `${structureSync.companies_processed} empresas sincronizadas` : 'Aguardando sincronização'}</dd></div>
             <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última atualização de registros</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(latestImport?.finished_at)}</dd></div>
             <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última sincronização cadastral</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(structureSync?.finished_at)}</dd></div>
             <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última alteração nas configurações</dt><dd className="text-slate-700 dark:text-slate-300 sm:col-span-2">{dateTime(settings.updatedAt)}</dd></div>
