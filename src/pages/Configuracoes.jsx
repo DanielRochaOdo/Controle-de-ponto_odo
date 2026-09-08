@@ -1,332 +1,82 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet';
-import { motion } from 'framer-motion';
-import { 
-  Save, 
-  RotateCcw, 
-  Clock, 
-  Palette,
-  Timer,
-  AlertTriangle,
-  Wrench
-} from 'lucide-react';
+import { Info, Save } from 'lucide-react';
 import Layout from '@/components/layout/Layout';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
-import { StatusColors, TimeRecordStatus } from '@/types';
+import { DEFAULT_SETTINGS, fetchLatestImport, loadAttendanceSettings, saveAttendanceSettings, STATUS_LABELS } from '@/lib/attendanceService';
+import { TimeRecordStatus } from '@/types';
+
+const STATUSES = [TimeRecordStatus.ON_TIME, TimeRecordStatus.LATE, TimeRecordStatus.LATE_EXIT, TimeRecordStatus.EARLY, TimeRecordStatus.ADJUSTED];
 
 const Configuracoes = () => {
-  const initialTimeSettings = {
-    [TimeRecordStatus.ON_TIME]: 5,
-    [TimeRecordStatus.LATE]: 5,
-    [TimeRecordStatus.LATE_EXIT]: 5,
-    [TimeRecordStatus.EARLY]: 5,
-    [TimeRecordStatus.ADJUSTED]: 5
-  };
-  
-  const [timeSettings, setTimeSettings] = useState(initialTimeSettings);
-  const [statusColors, setStatusColors] = useState(StatusColors);
+  const { user } = useAuth();
   const { toast } = useToast();
-
-  const normalizeTimeSettings = (settings = {}) => {
-    const baseTolerance = Number.isFinite(settings?.toleranceMinutes)
-      ? settings.toleranceMinutes
-      : 5;
-
-    return {
-      [TimeRecordStatus.ON_TIME]: Number.isFinite(settings?.[TimeRecordStatus.ON_TIME])
-        ? settings[TimeRecordStatus.ON_TIME]
-        : baseTolerance,
-      [TimeRecordStatus.LATE]: Number.isFinite(settings?.[TimeRecordStatus.LATE])
-        ? settings[TimeRecordStatus.LATE]
-        : baseTolerance,
-      [TimeRecordStatus.LATE_EXIT]: Number.isFinite(settings?.[TimeRecordStatus.LATE_EXIT])
-        ? settings[TimeRecordStatus.LATE_EXIT]
-        : baseTolerance,
-      [TimeRecordStatus.EARLY]: Number.isFinite(settings?.[TimeRecordStatus.EARLY])
-        ? settings[TimeRecordStatus.EARLY]
-        : baseTolerance,
-      [TimeRecordStatus.ADJUSTED]: Number.isFinite(settings?.[TimeRecordStatus.ADJUSTED])
-        ? settings[TimeRecordStatus.ADJUSTED]
-        : baseTolerance
-    };
-  };
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [latestImport, setLatestImport] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const savedConfig = localStorage.getItem('timeControlConfig');
-    if (savedConfig) {
-      const config = JSON.parse(savedConfig);
-      if (config.timeSettings) setTimeSettings(normalizeTimeSettings(config.timeSettings));
-      if (config.statusColors) setStatusColors({ ...StatusColors, ...config.statusColors });
-    }
-  }, []);
+    if (!user) return;
+    Promise.all([loadAttendanceSettings(user.id), fetchLatestImport(user.id)])
+      .then(([loaded, importRun]) => { setSettings(loaded); setLatestImport(importRun); })
+      .catch((error) => toast({ title: 'Erro ao carregar configurações', description: error.message, variant: 'destructive' }));
+  }, [user]);
 
-  const colorOptions = [
-    { value: '#22c55e', label: 'Verde' },
-    { value: '#ef4444', label: 'Vermelho' },
-    { value: '#3b82f6', label: 'Azul' },
-    { value: '#f59e0b', label: 'Amarelo' },
-    { value: '#8b5cf6', label: 'Roxo' },
-    { value: '#06b6d4', label: 'Ciano' },
-    { value: '#f97316', label: 'Laranja' },
-    { value: '#84cc16', label: 'Lima' },
-    { value: '#ffffff', label: 'Branco' }
-  ];
-
-  const handleTimeChange = (status, value) => {
-    const numValue = parseInt(value, 10);
-    if (isNaN(numValue) || numValue < 0) return;
-
-    setTimeSettings((prev) => ({
-      ...prev,
-      [status]: numValue
-    }));
-  };
-  
-  const handleSave = () => {
-    const config = { timeSettings, statusColors };
-    localStorage.setItem('timeControlConfig', JSON.stringify(config));
-    
-    toast({
-      title: "Configurações salvas",
-      description: "As novas regras e cores foram salvas com sucesso.",
-    });
+  const updateTolerance = (status, value) => {
+    const number = Math.max(0, Math.min(60, Number(value) || 0));
+    setSettings((old) => ({ ...old, tolerances: { ...old.tolerances, [status]: number } }));
   };
 
-  const handleReset = () => {
-    setTimeSettings(initialTimeSettings);
-    setStatusColors(StatusColors);
-    localStorage.removeItem('timeControlConfig');
-    
-    toast({
-      title: "Configurações resetadas",
-      description: "As configurações foram restauradas para os valores padrão.",
-    });
+  const updateColor = (status, value) => setSettings((old) => ({ ...old, colors: { ...old.colors, [status]: value } }));
+
+  const save = async () => {
+    if (!user) return;
+    setSaving(true);
+    try {
+      const updated = await saveAttendanceSettings(user.id, settings);
+      setSettings(updated);
+      toast({ title: 'Configurações salvas', description: 'Tolerâncias e cores foram atualizadas.' });
+    } catch (error) {
+      toast({ title: 'Erro ao salvar', description: error.message, variant: 'destructive' });
+    } finally { setSaving(false); }
   };
 
-  const handleColorChange = (status, color) => {
-    setStatusColors(prev => ({
-      ...prev,
-      [status]: color
-    }));
-  };
-
-  const toleranceOptions = Array.from({ length: 61 }, (_, i) => i); // 0 to 60 minutes
-  const onTimeTolerance = timeSettings?.[TimeRecordStatus.ON_TIME] ?? 5;
-  const lateTolerance = timeSettings?.[TimeRecordStatus.LATE] ?? 5;
-  const lateExitTolerance = timeSettings?.[TimeRecordStatus.LATE_EXIT] ?? 5;
-  const earlyTolerance = timeSettings?.[TimeRecordStatus.EARLY] ?? 5;
-  const adjustedTolerance = timeSettings?.[TimeRecordStatus.ADJUSTED] ?? 5;
-
-  const TimeSettingInput = ({ label, icon: Icon, description, statusKey }) => {
-    const selectedValue = Number.isFinite(timeSettings?.[statusKey])
-      ? timeSettings[statusKey]
-      : 5;
-
-    return (
-      <div className="p-4 bg-gray-50 rounded-lg dark:bg-gray-900 dark:border dark:border-gray-800">
-        <div className="flex items-center gap-3 mb-3">
-          <Icon className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-          <h4 className="font-medium text-gray-900 dark:text-gray-100">{label}</h4>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`tolerance-${statusKey}`} className="text-sm text-gray-700 dark:text-gray-200">Tolerância (minutos)</Label>
-          <Select 
-              value={String(selectedValue)}
-              onValueChange={(value) => handleTimeChange(statusKey, value)}
-          >
-            <SelectTrigger id={`tolerance-${statusKey}`}>
-              <SelectValue placeholder="Selecione os minutos..." />
-            </SelectTrigger>
-            <SelectContent>
-              {toleranceOptions.map(min => (
-                <SelectItem key={min} value={String(min)}>{min} min</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <p className="text-xs text-gray-500 mt-2 dark:text-gray-400">{description}</p>
-      </div>
-    );
-  };
-
-  const ColorPicker = ({ status, currentColor, label }) => (
-    <div className="space-y-2">
-      <Label className="text-sm font-medium text-gray-700 dark:text-gray-200">{label}</Label>
-      <Select value={currentColor} onValueChange={(color) => handleColorChange(status, color)}>
-        <SelectTrigger>
-          <SelectValue>
-            <div className="flex items-center gap-2">
-              <div 
-                className="w-4 h-4 rounded-full border border-gray-300"
-                style={{ backgroundColor: currentColor }}
-              />
-              <span>{colorOptions.find(c => c.value === currentColor)?.label || 'Personalizada'}</span>
-            </div>
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {colorOptions.map((color) => (
-            <SelectItem key={color.value} value={color.value}>
-              <div className="flex items-center gap-2">
-                <div 
-                  className="w-4 h-4 rounded-full border border-gray-300"
-                  style={{ backgroundColor: color.value }}
-                />
-                <span>{color.label}</span>
-              </div>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
+  const dateTime = (value) => value ? new Date(value).toLocaleString('pt-BR') : 'Ainda não disponível';
 
   return (
     <>
-      <Helmet>
-        <title>Configurações - Controle de Ponto</title>
-        <meta name="description" content="Configure regras de tolerância e cores de status para o sistema de controle de ponto." />
-      </Helmet>
-
+      <Helmet><title>Configurações | Controle de Ponto</title></Helmet>
       <Layout>
-        <div className="space-y-8">
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Configurações</h1>
-            <p className="text-gray-600 mt-2 dark:text-gray-400">
-              Ajuste as regras de tolerância de tempo e a aparência do sistema.
-            </p>
-          </motion.div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-            >
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Clock className="w-5 h-5 text-primary-500" />
-                    Regras de Horário
-                  </CardTitle>
-                  <CardDescription>
-                    Defina a tolerância em minutos para cada status de registro.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4 sm:space-y-6">
-                  <TimeSettingInput 
-                    label="Tolerância de No Horário" 
-                    icon={Clock}
-                    description="Margem em minutos para considerar o registro dentro do horário."
-                    statusKey={TimeRecordStatus.ON_TIME}
-                  />
-                  <TimeSettingInput 
-                    label="Tolerância de Atraso (Entrada)" 
-                    icon={AlertTriangle}
-                    description="Minutos após o horário previsto de entrada para considerar o registro atrasado."
-                    statusKey={TimeRecordStatus.LATE}
-                  />
-                  <TimeSettingInput 
-                    label="Tolerância de Saída após Horário" 
-                    icon={AlertTriangle}
-                    description="Minutos após o horário previsto de saída para considerar o registro após o horário."
-                    statusKey={TimeRecordStatus.LATE_EXIT}
-                  />
-                  <TimeSettingInput 
-                    label="Tolerância de Antecipação" 
-                    icon={Timer}
-                    description="Minutos antes do horário previsto para considerar o registro antecipado."
-                    statusKey={TimeRecordStatus.EARLY}
-                  />
-                  <TimeSettingInput 
-                    label="Tolerância de Ajuste" 
-                    icon={Wrench}
-                    description="Valor de referência para registros ajustados manualmente."
-                    statusKey={TimeRecordStatus.ADJUSTED}
-                  />
-                  
-                  <div className="p-4 bg-blue-50 rounded-lg dark:bg-gray-900 dark:border dark:border-gray-800">
-                    <h4 className="font-medium text-blue-900 mb-2 dark:text-gray-100">Como funciona:</h4>
-                    <ul className="text-sm text-blue-800 space-y-1 dark:text-gray-200">
-                      <li>• <strong>No Horário:</strong> Até {onTimeTolerance} min de diferença do horário</li>
-                      <li>• <strong>Atrasado (Entrada):</strong> Mais de {lateTolerance} min após o horário de entrada</li>
-                      <li>• <strong>Saída após Horário:</strong> Mais de {lateExitTolerance} min após o horário de saída</li>
-                      <li>• <strong>Antecipado:</strong> Mais de {earlyTolerance} min antes do horário</li>
-                      <li>• <strong>Ajustado:</strong> Registros marcados com * (referência: {adjustedTolerance} min)</li>
-                    </ul>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-            >
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Palette className="w-5 h-5 text-secondary-500" />
-                    Cores dos Status
-                  </CardTitle>
-                  <CardDescription>
-                    Personalize as cores para cada status de ponto.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4 sm:space-y-6">
-                  <ColorPicker status={TimeRecordStatus.ON_TIME} currentColor={statusColors[TimeRecordStatus.ON_TIME]} label="No Horário" />
-                  <ColorPicker status={TimeRecordStatus.LATE} currentColor={statusColors[TimeRecordStatus.LATE]} label="Atrasado" />
-                  <ColorPicker status={TimeRecordStatus.LATE_EXIT} currentColor={statusColors[TimeRecordStatus.LATE_EXIT]} label="Saída após Horário" />
-                  <ColorPicker status={TimeRecordStatus.EARLY} currentColor={statusColors[TimeRecordStatus.EARLY]} label="Antecipado" />
-                  <ColorPicker status={TimeRecordStatus.ADJUSTED} currentColor={statusColors[TimeRecordStatus.ADJUSTED]} label="Ajustado" />
-
-                  <div className="p-4 bg-gray-50 rounded-lg dark:bg-gray-900 dark:border dark:border-gray-800">
-                    <h4 className="font-medium text-gray-900 mb-3 dark:text-gray-100">Prévia das cores:</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {Object.entries(statusColors).map(([status, color]) => (
-                        <div key={status} className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-full border border-gray-300" style={{ backgroundColor: color }} />
-                          <span className="text-xs text-gray-600 dark:text-gray-300">
-                            {status === TimeRecordStatus.ON_TIME ? 'No horário' : 
-                             status === TimeRecordStatus.LATE ? 'Atrasado' :
-                             status === TimeRecordStatus.LATE_EXIT ? 'Saída após horário' :
-                             status === TimeRecordStatus.EARLY ? 'Antecipado' : 'Ajustado'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          </div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-            className="flex flex-col sm:flex-row justify-end gap-4"
-          >
-            <Button variant="outline" onClick={handleReset} className="flex items-center gap-2 justify-center">
-              <RotateCcw className="w-4 h-4" />
-              Resetar
-            </Button>
-            <Button onClick={handleSave} className="bg-primary-500 hover:bg-primary-600 text-white flex items-center gap-2 justify-center">
-              <Save className="w-4 h-4" />
-              Salvar Configurações
-            </Button>
-          </motion.div>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div><h1 className="text-3xl font-semibold tracking-tight">Configurações</h1><p className="mt-1 text-sm text-slate-500">Ajuste as tolerâncias e as cores dos status.</p></div>
+          <button onClick={save} disabled={saving} className="inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-[#0d4d82] px-5 font-medium text-white shadow-sm hover:bg-[#0b426f] disabled:opacity-60"><Save className="h-5 w-5"/>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
         </div>
+
+        <div className="mt-6 grid gap-5 xl:grid-cols-2">
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-[#0b3154]">Tolerâncias (em minutos)</h2>
+            <div className="mt-6 space-y-4">
+              {STATUSES.map((status) => <div key={status} className="grid grid-cols-[1fr_120px_24px] items-center gap-3"><label htmlFor={`tol-${status}`} className="text-sm font-medium text-slate-700">{STATUS_LABELS[status]}</label><input id={`tol-${status}`} type="number" min="0" max="60" value={settings.tolerances[status]} onChange={(e) => updateTolerance(status, e.target.value)} className="h-11 rounded-lg border border-slate-300 px-3"/><span title={status === TimeRecordStatus.ADJUSTED ? 'O status Ajustado vem sinalizado pela origem; o valor é mantido como configuração de referência.' : 'Limite em minutos usado na classificação.'}><Info className="h-4 w-4 text-slate-400"/></span></div>)}
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-semibold text-[#0b3154]">Cores dos status</h2>
+            <div className="mt-6 space-y-4">
+              {STATUSES.map((status) => <div key={status} className="grid grid-cols-[1fr_42px_132px] items-center gap-3"><span className="text-sm font-medium text-slate-700">{STATUS_LABELS[status]}</span><input type="color" value={settings.colors[status]} onChange={(e) => updateColor(status, e.target.value)} className="h-9 w-9 cursor-pointer rounded-full border-0 bg-transparent p-0"/><input value={settings.colors[status]} onChange={(e) => updateColor(status, e.target.value)} className="h-11 rounded-lg border border-slate-300 px-3 font-mono text-sm uppercase"/></div>)}
+            </div>
+          </section>
+        </div>
+
+        <section className="mt-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-xl font-semibold text-[#0b3154]">Informações do sistema</h2>
+          <dl className="mt-5 divide-y divide-slate-100 text-sm">
+            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Empresa</dt><dd className="sm:col-span-2">Odontoart</dd></div>
+            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última atualização da Flash</dt><dd className="sm:col-span-2">{dateTime(latestImport?.finished_at)}</dd></div>
+            <div className="grid gap-2 py-3 sm:grid-cols-3"><dt className="text-slate-500">Última alteração nas configurações</dt><dd className="sm:col-span-2">{dateTime(settings.updatedAt)}</dd></div>
+          </dl>
+        </section>
       </Layout>
     </>
   );

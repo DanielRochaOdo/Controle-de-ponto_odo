@@ -1,18 +1,15 @@
-
-import React, { useState } from 'react';
+import React from 'react';
 import Sidebar from './Sidebar';
 
-const Layout = ({ children }) => {
-  return (
-    <div className="flex flex-col lg:flex-row min-h-screen bg-background text-foreground">
-      <Sidebar />
-      <main className="flex-1 overflow-auto lg:pl-[var(--sidebar-width)] transition-[padding] duration-300">
-        <div className="p-4 sm:p-6 lg:p-8">
-          {children}
-        </div>
-      </main>
-    </div>
-  );
-};
+const Layout = ({ children }) => (
+  <div className="min-h-screen bg-[#f5f8fb] text-slate-900">
+    <Sidebar />
+    <main className="lg:pl-56">
+      <div className="mx-auto w-full max-w-[1500px] p-4 sm:p-6 lg:p-8">
+        {children}
+      </div>
+    </main>
+  </div>
+);
 
 export default Layout;

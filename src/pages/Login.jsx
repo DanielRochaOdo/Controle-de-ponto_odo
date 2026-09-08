@@ -1,13 +1,8 @@
 import React, { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet';
-import { motion } from 'framer-motion';
-import { Building2, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Lock, UserRound } from 'lucide-react';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/components/ui/use-toast';
 
 const Login = () => {
@@ -15,154 +10,90 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  
   const { user, signIn } = useAuth();
-  const location = useLocation();
   const { toast } = useToast();
+  const location = useLocation();
 
-  const from = location.state?.from?.pathname || '/dashboard';
+  if (user) return <Navigate to={location.state?.from?.pathname || '/dashboard'} replace />;
 
-  // Redirect if already logged in
-  if (user) {
-    return <Navigate to={from} replace />;
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     if (!email || !password) {
-      toast({
-        title: "Campos obrigatórios",
-        description: "Por favor, preencha todos os campos.",
-        variant: "destructive",
-      });
+      toast({ title: 'Campos obrigatórios', description: 'Informe usuário e senha.', variant: 'destructive' });
       return;
     }
 
     setLoading(true);
-
-    try {
-      const { error } = await signIn(email, password);
-      
-      if (error) {
-        toast({
-          title: "Erro no login",
-          description: error.message || "Credenciais inválidas.",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Login realizado",
-          description: "Bem-vindo ao sistema!",
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Erro",
-        description: "Ocorreu um erro inesperado. Tente novamente.",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
+    const { error } = await signIn(email, password);
+    setLoading(false);
+    if (error) toast({ title: 'Não foi possível entrar', description: error.message, variant: 'destructive' });
   };
 
   return (
     <>
       <Helmet>
-        <title>Login - Controle de Ponto</title>
-        <meta name="description" content="Faça login no sistema de controle de ponto para gerenciar registros e usuários." />
+        <title>Controle de Ponto | Odontoart</title>
+        <meta name="description" content="Sistema interno de controle de ponto da Odontoart." />
       </Helmet>
-      
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-secondary-50 p-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="w-full max-w-md mx-auto"
-        >
-          <Card className="shadow-xl border-0">
-            <CardHeader className="text-center pb-8">
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-                className="mx-auto w-16 h-16 bg-primary-500 rounded-2xl flex items-center justify-center mb-4"
-              >
-                <Building2 className="w-8 h-8 text-white" />
-              </motion.div>
-              
-              <CardTitle className="text-2xl font-bold text-gray-900">
-                Controle de Ponto
-              </CardTitle>
-              <CardDescription className="text-gray-600">
-                Faça login para acessar o sistema
-              </CardDescription>
-            </CardHeader>
 
-            <CardContent className="px-6 sm:px-8">
-              <form onSubmit={handleSubmit} className="space-y-6">
-                <div className="space-y-2">
-                  <Label htmlFor="email" className="text-gray-700">
-                    Email
-                  </Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="seu@email.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10"
-                      disabled={loading}
-                    />
-                  </div>
-                </div>
+      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#f8fbff_0,#eef4f9_45%,#f7f9fb_100%)] px-4">
+        <div className="w-full max-w-[520px]">
+          <div className="rounded-2xl border border-slate-200/80 bg-white px-8 py-12 shadow-[0_18px_60px_rgba(15,49,84,0.08)] sm:px-14">
+            <div className="mb-10 text-center">
+              <div className="inline-flex flex-col items-center text-[#0b3154]">
+                <span className="text-5xl font-light tracking-tight leading-none">Odontoart</span>
+                <span className="mt-2 h-4 w-24 rounded-b-full border-b-4 border-[#0b3154]" />
+              </div>
+              <h1 className="mt-7 text-2xl font-semibold text-[#0b3154]">Controle de Ponto</h1>
+            </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="password" className="text-gray-700">
-                    Senha
-                  </Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                    <Input
-                      id="password"
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="Sua senha"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10 pr-10"
-                      disabled={loading}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                    >
-                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                    </button>
-                  </div>
-                </div>
-
-                <Button
-                  type="submit"
-                  className="w-full bg-primary-500 hover:bg-primary-600 text-white"
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <label className="relative block">
+                <UserRound className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="email"
+                  autoComplete="username"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="Usuário"
                   disabled={loading}
+                  className="h-14 w-full rounded-lg border border-slate-300 bg-white pl-12 pr-4 text-base outline-none transition placeholder:text-slate-400 focus:border-[#17558a] focus:ring-2 focus:ring-[#17558a]/10"
+                />
+              </label>
+
+              <label className="relative block">
+                <Lock className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Senha"
+                  disabled={loading}
+                  className="h-14 w-full rounded-lg border border-slate-300 bg-white pl-12 pr-12 text-base outline-none transition placeholder:text-slate-400 focus:border-[#17558a] focus:ring-2 focus:ring-[#17558a]/10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((value) => !value)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                 >
-                  {loading ? (
-                    <div className="flex items-center gap-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Entrando...
-                    </div>
-                  ) : (
-                    'Entrar'
-                  )}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-        </motion.div>
+                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </label>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="mt-2 h-14 w-full rounded-lg bg-[#0d4d82] text-base font-semibold text-white shadow-sm transition hover:bg-[#0b426f] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? 'Entrando...' : 'Entrar'}
+              </button>
+            </form>
+          </div>
+
+          <p className="mt-8 text-center text-sm text-slate-400">Sistema interno • Odontoart</p>
+        </div>
       </div>
     </>
   );
