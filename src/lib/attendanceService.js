@@ -136,18 +136,34 @@ export async function fetchImportHistory(userId, limit = 12) {
   return data || [];
 }
 
-export async function importAttendanceFromFlash(startDate, endDate) {
+export async function fetchLatestStructureSync(userId) {
+  if (!userId) return null;
+  const { data, error } = await supabase
+    .from('flash_structure_sync_runs')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'completed')
+    .order('finished_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function authenticatedApiPost(path, body = {}) {
   const { data: { session }, error: sessionError } = await supabase.auth.getSession();
   if (sessionError || !session?.access_token) throw new Error('Sessão expirada. Entre novamente no sistema.');
 
-  const response = await fetch('/api/import-attendance', {
+  const response = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-    body: JSON.stringify({ startDate, endDate }),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify(body),
   });
 
   const payload = await response.json().catch(() => ({}));
-
   if (!response.ok) {
     const diagnostics = {
       httpStatus: response.status,
@@ -157,16 +173,22 @@ export async function importAttendanceFromFlash(startDate, endDate) {
       flashEndpoint: payload.flashEndpoint || null,
       flashRequestId: payload.flashRequestId || null,
     };
-
-    console.error('[Importação Flash] Falha:', diagnostics);
+    console.error(`[API ${path}] Falha:`, diagnostics);
 
     const stage = payload.stage ? ` (${payload.stage})` : '';
     const flashStatus = payload.flashStatus ? ` [Flash HTTP ${payload.flashStatus}]` : '';
     const endpoint = payload.flashEndpoint ? ` [${payload.flashEndpoint}]` : '';
     const requestId = payload.flashRequestId ? ` [request_id: ${payload.flashRequestId}]` : '';
-
-    throw new Error(`${payload.error || 'Não foi possível atualizar os dados da Flash.'}${stage}${flashStatus}${endpoint}${requestId}`);
+    throw new Error(`${payload.error || 'Falha na operação.'}${stage}${flashStatus}${endpoint}${requestId}`);
   }
 
   return payload;
+}
+
+export async function syncFlashStructure() {
+  return authenticatedApiPost('/api/sync-flash-structure');
+}
+
+export async function importAttendanceFromFlash(startDate, endDate) {
+  return authenticatedApiPost('/api/import-attendance', { startDate, endDate });
 }
