@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Helmet } from 'react-helmet';
 import { Building, Clock3, Info, RefreshCw, Save, Users } from 'lucide-react';
 import Layout from '@/components/layout/Layout';
@@ -8,6 +8,7 @@ import {
   DEFAULT_SETTINGS,
   fetchLatestImport,
   fetchLatestStructureSync,
+  fetchLatestStructureSyncRun,
   loadAttendanceSettings,
   saveAttendanceSettings,
   STATUS_LABELS,
@@ -33,20 +34,102 @@ const StructureMetric = ({ icon: Icon, label, value }) => (
   </div>
 );
 
+const calculateProgress = (run) => {
+  if (!run) return 0;
+  if (run.status === 'completed') return 100;
+
+  const companiesTotal = Number(run.companies_total || 0);
+  if (!companiesTotal) return run.status === 'running' ? 2 : 0;
+
+  if (String(run.current_stage || '').includes('Gravando estrutura')) return 98;
+
+  const companyIndex = Math.max(1, Number(run.current_company_index || 1));
+  const employeesTotal = Number(run.current_company_employees_total || 0);
+  const employeesProcessed = Number(run.current_company_employees_processed || 0);
+  let withinCompany = 0.08;
+
+  if (employeesTotal > 0) {
+    withinCompany = 0.15 + (0.75 * Math.min(1, employeesProcessed / employeesTotal));
+  }
+  if (run.current_stage === 'Empresa concluída') withinCompany = 1;
+
+  return Math.max(1, Math.min(99, Math.round((((companyIndex - 1) + withinCompany) / companiesTotal) * 100)));
+};
+
+const SyncProgressPanel = ({ run, pending }) => {
+  const progress = calculateProgress(run);
+  const isFailed = run?.status === 'failed';
+  const companiesTotal = Number(run?.companies_total || 0);
+  const companiesProcessed = Number(run?.companies_processed || 0);
+  const currentIndex = Number(run?.current_company_index || 0);
+  const employeesTotal = Number(run?.current_company_employees_total || 0);
+  const employeesProcessed = Number(run?.current_company_employees_processed || 0);
+  const stage = run?.current_stage || (pending ? 'Iniciando sincronização...' : 'Aguardando progresso');
+  const title = run?.current_company_name || (stage.includes('Gravando') ? 'Todas as empresas consultadas' : 'Preparando empresas');
+
+  return (
+    <div className={`mt-6 rounded-2xl border p-5 ${isFailed ? 'border-red-200 bg-red-50/70 dark:border-red-900/60 dark:bg-red-950/20' : 'border-[#cfe8bf] bg-[#f7fcf3] dark:border-emerald-900/60 dark:bg-emerald-950/20'}`}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${isFailed ? 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-300' : 'bg-[#e8f8df] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300'}`}>
+            <RefreshCw className={`h-5 w-5 ${!isFailed && pending ? 'animate-spin' : ''}`} />
+          </span>
+          <div className="min-w-0">
+            <p className={`text-xs font-semibold uppercase tracking-wide ${isFailed ? 'text-red-600 dark:text-red-300' : 'text-[#2f8f17] dark:text-emerald-300'}`}>
+              {isFailed ? 'Sincronização interrompida' : 'Sincronização em andamento'}
+            </p>
+            <h3 className="mt-1 truncate text-base font-semibold text-[#173c2c] dark:text-slate-100">{title}</h3>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{stage}</p>
+          </div>
+        </div>
+        <strong className={`text-2xl ${isFailed ? 'text-red-600 dark:text-red-300' : 'text-[#2f8f17] dark:text-emerald-300'}`}>{isFailed ? 'Falhou' : `${progress}%`}</strong>
+      </div>
+
+      {!isFailed && (
+        <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-[#dcebd4] dark:bg-slate-800">
+          <div className="h-full rounded-full bg-[#57D100] transition-[width] duration-500" style={{ width: `${progress}%` }} />
+        </div>
+      )}
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl bg-white/80 px-4 py-3 dark:bg-slate-950/50">
+          <span className="text-xs text-slate-500 dark:text-slate-400">Empresa atual</span>
+          <strong className="mt-1 block text-sm text-[#173c2c] dark:text-slate-100">{currentIndex || '—'} de {companiesTotal || '—'}</strong>
+        </div>
+        <div className="rounded-xl bg-white/80 px-4 py-3 dark:bg-slate-950/50">
+          <span className="text-xs text-slate-500 dark:text-slate-400">Escalas da empresa atual</span>
+          <strong className="mt-1 block text-sm text-[#173c2c] dark:text-slate-100">{employeesTotal > 0 ? `${employeesProcessed} de ${employeesTotal} colaboradores` : 'Aguardando colaboradores'}</strong>
+        </div>
+        <div className="rounded-xl bg-white/80 px-4 py-3 dark:bg-slate-950/50">
+          <span className="text-xs text-slate-500 dark:text-slate-400">Empresas concluídas</span>
+          <strong className="mt-1 block text-sm text-[#173c2c] dark:text-slate-100">{companiesProcessed} de {companiesTotal || '—'}</strong>
+        </div>
+      </div>
+
+      {isFailed && run?.error_message && <p className="mt-4 rounded-xl bg-white/80 px-4 py-3 text-sm text-red-700 dark:bg-slate-950/50 dark:text-red-300">{run.error_message}</p>}
+    </div>
+  );
+};
+
 const Configuracoes = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [latestImport, setLatestImport] = useState(null);
   const [structureSync, setStructureSync] = useState(null);
+  const [syncProgress, setSyncProgress] = useState(null);
   const [saving, setSaving] = useState(false);
   const [syncingStructure, setSyncingStructure] = useState(false);
 
   const reloadStructureSync = async () => {
     if (!user) return null;
-    const data = await fetchLatestStructureSync(user.id);
-    setStructureSync(data);
-    return data;
+    const [completed, latestRun] = await Promise.all([
+      fetchLatestStructureSync(user.id),
+      fetchLatestStructureSyncRun(user.id),
+    ]);
+    setStructureSync(completed);
+    setSyncProgress(latestRun);
+    return completed;
   };
 
   useEffect(() => {
@@ -55,14 +138,37 @@ const Configuracoes = () => {
       loadAttendanceSettings(user.id),
       fetchLatestImport(user.id),
       fetchLatestStructureSync(user.id).catch(() => null),
+      fetchLatestStructureSyncRun(user.id).catch(() => null),
     ])
-      .then(([loaded, importRun, latestStructure]) => {
+      .then(([loaded, importRun, latestStructure, latestRun]) => {
         setSettings(loaded);
         setLatestImport(importRun);
         setStructureSync(latestStructure);
+        setSyncProgress(latestRun);
       })
       .catch((error) => toast({ title: 'Erro ao carregar configurações', description: error.message, variant: 'destructive' }));
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !syncingStructure) return undefined;
+
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const run = await fetchLatestStructureSyncRun(user.id);
+        if (!cancelled && run) setSyncProgress(run);
+      } catch (error) {
+        console.error('[Sincronização Flash] Falha ao consultar progresso:', error);
+      }
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [user, syncingStructure]);
 
   const updateTolerance = (status, value) => {
     const number = Math.max(0, Math.min(60, Number(value) || 0));
@@ -86,6 +192,7 @@ const Configuracoes = () => {
   const handleStructureSync = async () => {
     if (!user) return;
     setSyncingStructure(true);
+    setSyncProgress(null);
     try {
       const result = await syncFlashStructure();
       await reloadStructureSync();
@@ -97,6 +204,12 @@ const Configuracoes = () => {
         description: `${result.companiesProcessed} empresas, ${result.employeesProcessed} colaboradores, ${result.departmentsProcessed} departamentos e ${result.allocationsProcessed} alocações atualizados.${warningText}`,
       });
     } catch (error) {
+      try {
+        const latestRun = await fetchLatestStructureSyncRun(user.id);
+        if (latestRun) setSyncProgress(latestRun);
+      } catch {
+        // O erro principal da sincronização continua sendo exibido abaixo.
+      }
       toast({ title: 'Falha na sincronização', description: error.message, variant: 'destructive' });
     } finally {
       setSyncingStructure(false);
@@ -104,6 +217,12 @@ const Configuracoes = () => {
   };
 
   const dateTime = (value) => value ? new Date(value).toLocaleString('pt-BR') : 'Ainda não disponível';
+  const showProgress = syncingStructure || syncProgress?.status === 'running' || (syncProgress?.status === 'failed' && syncProgress?.id !== structureSync?.id);
+  const progressSummary = useMemo(() => {
+    if (!syncProgress) return null;
+    const updated = syncProgress.progress_updated_at || syncProgress.finished_at || syncProgress.started_at;
+    return updated ? `Último avanço registrado: ${dateTime(updated)}` : null;
+  }, [syncProgress]);
 
   return (
     <>
@@ -153,6 +272,9 @@ const Configuracoes = () => {
               {syncingStructure ? 'Sincronizando...' : 'Sincronizar estrutura da Flash'}
             </button>
           </div>
+
+          {showProgress && <SyncProgressPanel run={syncProgress} pending={syncingStructure} />}
+          {showProgress && progressSummary && <p className="mt-2 text-right text-xs text-slate-400">{progressSummary}</p>}
 
           <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <StructureMetric icon={Building} label="Empresas" value={structureSync?.companies_processed ?? '—'} />
