@@ -1,8 +1,7 @@
-
 export const UserRole = {
   ADMIN: 'admin',
   USER: 'user',
-  MANAGER: 'manager'
+  MANAGER: 'manager',
 };
 
 export const TimeRecordStatus = {
@@ -10,7 +9,7 @@ export const TimeRecordStatus = {
   LATE: 'late',
   LATE_EXIT: 'late_exit',
   EARLY: 'early',
-  ADJUSTED: 'adjusted'
+  ADJUSTED: 'adjusted',
 };
 
 export const StatusColors = {
@@ -18,9 +17,8 @@ export const StatusColors = {
   [TimeRecordStatus.LATE]: '#ef4444',
   [TimeRecordStatus.LATE_EXIT]: '#f97316',
   [TimeRecordStatus.EARLY]: '#3b82f6',
-  [TimeRecordStatus.ADJUSTED]: '#f59e0b'
+  [TimeRecordStatus.ADJUSTED]: '#eab308',
 };
 
 export const mockTimeRecords = [];
-
 export const mockUsers = [];
