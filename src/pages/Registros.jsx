@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Helmet } from 'react-helmet';
 import {
   AlertCircle,
+  Building,
   Check,
   Clock3,
   Download,
@@ -85,12 +86,12 @@ const ApiBanner = () => (
       <div>
         <h2 className="text-lg font-semibold text-[#173c2c] dark:text-slate-100">Dados importados manualmente via API</h2>
         <p className="mt-1 max-w-3xl text-sm leading-6 text-[#647c6e] dark:text-slate-400">
-          Os registros de ponto são importados manualmente por período, sem upload de arquivos. Atualize quando necessário e aplique filtros para visualizar ou exportar as informações.
+          Os registros são consultados em todas as empresas Flash configuradas, uma vez por dia e por empresa, sem consulta de batidas por colaborador.
         </p>
       </div>
     </div>
     <div className="space-y-2 border-l border-[#cfe8bf] pl-6 text-sm text-[#647c6e] dark:border-slate-700 dark:text-slate-400">
-      {['Sem upload de arquivos', 'Importação manual por período', 'Exportação baseada nos filtros aplicados'].map((text) => (
+      {['Todas as empresas configuradas', 'Importação manual por período', 'Exportação baseada nos filtros aplicados'].map((text) => (
         <div key={text} className="flex items-center gap-3"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#21a653] text-white"><Check className="h-3.5 w-3.5" /></span>{text}</div>
       ))}
     </div>
@@ -102,13 +103,13 @@ const Registros = () => {
   const { toast } = useToast();
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const initialRange = monthRange(month);
-  const [filters, setFilters] = useState({ ...initialRange, search: '', employee: 'all', department: 'all', status: 'all' });
+  const [filters, setFilters] = useState({ ...initialRange, search: '', company: 'all', employee: 'all', department: 'all', status: 'all' });
   const [appliedFilters, setAppliedFilters] = useState(filters);
   const [records, setRecords] = useState([]);
   const [summaryRecords, setSummaryRecords] = useState([]);
   const [count, setCount] = useState(0);
   const [page, setPage] = useState(1);
-  const [options, setOptions] = useState({ employees: [], departments: [] });
+  const [options, setOptions] = useState({ companies: [], employees: [], departments: [] });
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -160,7 +161,7 @@ const Registros = () => {
   useEffect(() => { loadRecords(); }, [user, page, appliedFilters]);
 
   const metrics = useMemo(() => {
-    const employees = new Set(summaryRecords.map((item) => item.employee_name)).size;
+    const employees = new Set(summaryRecords.map((item) => `${item.flash_company_id || ''}:${item.flash_employee_id || item.employee_name}`)).size;
     const onTime = summaryRecords.filter((item) => item.entry_status === TimeRecordStatus.ON_TIME).length;
     const late = summaryRecords.filter((item) => item.entry_status === TimeRecordStatus.LATE).length;
     const lateExit = summaryRecords.filter((item) => item.exit_status === TimeRecordStatus.LATE_EXIT).length;
@@ -172,6 +173,7 @@ const Registros = () => {
   const activeChips = useMemo(() => {
     const chips = [{ key: 'period', label: `Período: ${month.split('-').reverse().join('/')}` }];
     if (appliedFilters.search) chips.push({ key: 'search', label: `Busca: ${appliedFilters.search}` });
+    if (appliedFilters.company !== 'all') chips.push({ key: 'company', label: `Empresa: ${appliedFilters.company}` });
     if (appliedFilters.employee !== 'all') chips.push({ key: 'employee', label: `Colaborador: ${appliedFilters.employee}` });
     if (appliedFilters.department !== 'all') chips.push({ key: 'department', label: `Departamento: ${appliedFilters.department}` });
     if (appliedFilters.status !== 'all') chips.push({ key: 'status', label: `Status: ${STATUS_LABELS[appliedFilters.status]}` });
@@ -185,7 +187,7 @@ const Registros = () => {
 
   const clearFilters = () => {
     const range = monthRange(month);
-    setFilters({ ...range, search: '', employee: 'all', department: 'all', status: 'all' });
+    setFilters({ ...range, search: '', company: 'all', employee: 'all', department: 'all', status: 'all' });
   };
 
   const handleImport = async () => {
@@ -193,7 +195,7 @@ const Registros = () => {
     try {
       const range = monthRange(month);
       const result = await importAttendanceFromFlash(range.startDate, range.endDate);
-      toast({ title: 'Dados atualizados', description: `${result.recordsProcessed || 0} registros processados da Flash.` });
+      toast({ title: 'Dados atualizados', description: `${result.recordsProcessed || 0} registros processados em ${result.companiesProcessed || 0} empresas.` });
       if (user) setOptions(await fetchFilterOptions(user.id));
       await loadRecords();
     } catch (error) {
@@ -214,6 +216,7 @@ const Registros = () => {
       const worksheet = workbook.addWorksheet('Registros');
       worksheet.columns = [
         { header: 'Data', key: 'date', width: 13 },
+        { header: 'Empresa', key: 'company', width: 36 },
         { header: 'Colaborador', key: 'employee', width: 30 },
         { header: 'Departamento', key: 'department', width: 24 },
         { header: 'Entrada prevista', key: 'scheduledEntry', width: 18 },
@@ -228,12 +231,12 @@ const Registros = () => {
 
       allRecords.forEach((record) => {
         const row = worksheet.addRow({
-          date: formatDate(record.work_date), employee: record.employee_name, department: record.department || '',
+          date: formatDate(record.work_date), company: record.company_name || '', employee: record.employee_name, department: record.department || '',
           scheduledEntry: formatTime(record.scheduled_entry), actualEntry: formatTime(record.actual_entry),
           scheduledExit: formatTime(record.scheduled_exit), actualExit: formatTime(record.actual_exit),
           entryStatus: STATUS_LABELS[record.entry_status] || '', exitStatus: STATUS_LABELS[record.exit_status] || '',
         });
-        [[8, record.entry_status], [9, record.exit_status]].forEach(([column, status]) => {
+        [[9, record.entry_status], [10, record.exit_status]].forEach(([column, status]) => {
           if (!status) return;
           const hex = (settings.colors[status] || '#94a3b8').replace('#', '').toUpperCase();
           const cell = row.getCell(column);
@@ -284,8 +287,9 @@ const Registros = () => {
         <ApiBanner />
 
         <section className={`${CARD} mt-4 p-4`}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1.1fr_1fr_1fr_1fr_auto]">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-[1.1fr_1fr_1fr_1fr_1fr_auto]">
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Search className="h-4 w-4"/>Buscar</span><input value={filters.search} onChange={(event) => setFilters((old) => ({ ...old, search: event.target.value }))} placeholder="Digite o nome do colaborador..." className={FIELD}/></label>
+            <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Building className="h-4 w-4"/>Empresa</span><select value={filters.company} onChange={(event) => setFilters((old) => ({ ...old, company: event.target.value }))} className={FIELD}><option value="all">Todas as empresas</option>{options.companies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Users className="h-4 w-4"/>Colaborador</span><select value={filters.employee} onChange={(event) => setFilters((old) => ({ ...old, employee: event.target.value }))} className={FIELD}><option value="all">Todos os colaboradores</option>{options.employees.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><FileText className="h-4 w-4"/>Departamento</span><select value={filters.department} onChange={(event) => setFilters((old) => ({ ...old, department: event.target.value }))} className={FIELD}><option value="all">Todos os departamentos</option>{options.departments.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Clock3 className="h-4 w-4"/>Status</span><select value={filters.status} onChange={(event) => setFilters((old) => ({ ...old, status: event.target.value }))} className={FIELD}><option value="all">Todos os status</option>{STATUS_OPTIONS.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}</select></label>
@@ -312,12 +316,12 @@ const Registros = () => {
             <div><h2 className="text-lg font-semibold text-[#173c2c] dark:text-slate-100">Registros de ponto</h2><p className="text-xs text-slate-500">Mostrando {count === 0 ? 0 : (page - 1) * PAGE_SIZE + 1} a {Math.min(page * PAGE_SIZE, count)} de {count.toLocaleString('pt-BR')} registros (filtros aplicados)</p></div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1120px] text-sm">
-              <thead className="bg-[#f7fbf4] text-left text-xs text-[#63776b] dark:bg-slate-950 dark:text-slate-400"><tr><th className="px-5 py-3">Nome</th><th className="px-5 py-3">Departamento</th><th className="px-5 py-3">Data</th><th className="px-5 py-3">Entrada prevista</th><th className="px-5 py-3">Entrada real</th><th className="px-5 py-3">Saída prevista</th><th className="px-5 py-3">Saída real</th><th className="px-5 py-3">Status entrada</th><th className="px-5 py-3">Status saída</th></tr></thead>
+            <table className="w-full min-w-[1320px] text-sm">
+              <thead className="bg-[#f7fbf4] text-left text-xs text-[#63776b] dark:bg-slate-950 dark:text-slate-400"><tr><th className="px-5 py-3">Empresa</th><th className="px-5 py-3">Nome</th><th className="px-5 py-3">Departamento</th><th className="px-5 py-3">Data</th><th className="px-5 py-3">Entrada prevista</th><th className="px-5 py-3">Entrada real</th><th className="px-5 py-3">Saída prevista</th><th className="px-5 py-3">Saída real</th><th className="px-5 py-3">Status entrada</th><th className="px-5 py-3">Status saída</th></tr></thead>
               <tbody>
-                {!loading && records.map((record) => <tr key={record.id} className="border-t border-[#edf3e9] dark:border-slate-800"><td className="px-5 py-3 font-medium text-[#294436] dark:text-slate-200">{record.employee_name}</td><td className="px-5 py-3 text-slate-500">{record.department || '—'}</td><td className="px-5 py-3 text-slate-500">{formatDate(record.work_date)}</td><td className="px-5 py-3">{formatTime(record.scheduled_entry)}</td><td className="px-5 py-3">{formatTime(record.actual_entry)}</td><td className="px-5 py-3">{formatTime(record.scheduled_exit)}</td><td className="px-5 py-3">{formatTime(record.actual_exit)}</td><td className="px-5 py-3"><StatusBadge status={record.entry_status} colors={settings.colors}/></td><td className="px-5 py-3"><StatusBadge status={record.exit_status} colors={settings.colors}/></td></tr>)}
-                {!loading && records.length === 0 && <tr><td colSpan="9" className="px-5 py-14 text-center text-slate-400">Nenhum registro encontrado para os filtros selecionados.</td></tr>}
-                {loading && <tr><td colSpan="9" className="px-5 py-14 text-center text-slate-400">Carregando...</td></tr>}
+                {!loading && records.map((record) => <tr key={record.id} className="border-t border-[#edf3e9] dark:border-slate-800"><td className="px-5 py-3 text-xs font-medium text-[#065F2F] dark:text-emerald-300">{record.company_name || '—'}</td><td className="px-5 py-3 font-medium text-[#294436] dark:text-slate-200">{record.employee_name}</td><td className="px-5 py-3 text-slate-500">{record.department || '—'}</td><td className="px-5 py-3 text-slate-500">{formatDate(record.work_date)}</td><td className="px-5 py-3">{formatTime(record.scheduled_entry)}</td><td className="px-5 py-3">{formatTime(record.actual_entry)}</td><td className="px-5 py-3">{formatTime(record.scheduled_exit)}</td><td className="px-5 py-3">{formatTime(record.actual_exit)}</td><td className="px-5 py-3"><StatusBadge status={record.entry_status} colors={settings.colors}/></td><td className="px-5 py-3"><StatusBadge status={record.exit_status} colors={settings.colors}/></td></tr>)}
+                {!loading && records.length === 0 && <tr><td colSpan="10" className="px-5 py-14 text-center text-slate-400">Nenhum registro encontrado para os filtros selecionados.</td></tr>}
+                {loading && <tr><td colSpan="10" className="px-5 py-14 text-center text-slate-400">Carregando...</td></tr>}
               </tbody>
             </table>
           </div>
