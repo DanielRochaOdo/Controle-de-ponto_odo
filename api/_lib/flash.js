@@ -1,4 +1,5 @@
-const FLASH_BASE_URL = 'https://api.flashapp.services';
+const FLASH_CORE_BASE_URL = 'https://api.flashapp.services/core/v1/';
+const FLASH_ATTENDANCE_BASE_URL = 'https://api.flashapp.services/time-and-attendance/v1/';
 const DEFAULT_TIMEZONE = process.env.APP_TIMEZONE || 'America/Fortaleza';
 
 const pick = (object, paths) => {
@@ -10,10 +11,10 @@ const pick = (object, paths) => {
 };
 const asArray = (value) => Array.isArray(value) ? value : [];
 
-async function flashGet(path, query = {}) {
+async function flashGet(baseUrl, path, query = {}) {
   const apiKey = process.env.FLASH_API_KEY;
   if (!apiKey) throw new Error('FLASH_API_KEY não configurada.');
-  const url = new URL(path, FLASH_BASE_URL);
+  const url = new URL(String(path).replace(/^\/+/, ''), baseUrl);
   Object.entries(query).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
   });
@@ -28,7 +29,7 @@ export async function listEmployees(companyId) {
   let page = 1;
   const limit = 100;
   while (page <= 100) {
-    const payload = await flashGet('/core/v1/employees', { page, limit, companyId });
+    const payload = await flashGet(FLASH_CORE_BASE_URL, 'employees', { page, limit, companyId });
     const current = asArray(payload?.records);
     records.push(...current);
     const totalPages = Number(pick(payload, ['metadata.totalPages', 'metadata.pages'])) || null;
@@ -39,7 +40,7 @@ export async function listEmployees(companyId) {
 }
 
 export async function listTimetableAllocations(companyId, startDate, endDate) {
-  const payload = await flashGet('/time-and-attendance/v1/timetables/allocations', {
+  const payload = await flashGet(FLASH_ATTENDANCE_BASE_URL, 'timetables/allocations', {
     companyId,
     startDate: `${startDate}T00:00:00.000Z`,
     endDate: `${endDate}T23:59:59.999Z`,
@@ -48,7 +49,7 @@ export async function listTimetableAllocations(companyId, startDate, endDate) {
 }
 
 export async function listAttendanceDay(companyId, date) {
-  const payload = await flashGet('/time-and-attendance/v1/attendance/day', { companyId, date });
+  const payload = await flashGet(FLASH_ATTENDANCE_BASE_URL, 'attendance/day', { companyId, date });
   return asArray(payload?.data);
 }
 
