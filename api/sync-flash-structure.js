@@ -80,7 +80,16 @@ async function upsertChunks(supabase, table, rows, onConflict, size = 500) {
   }
 }
 
-async function loadAllocations(company, employees, startDate, endDate) {
+async function updateProgress(supabase, runId, values) {
+  if (!supabase || !runId) return;
+  const { error } = await supabase
+    .from('flash_structure_sync_runs')
+    .update({ ...values, progress_updated_at: new Date().toISOString() })
+    .eq('id', runId);
+  if (error) throw error;
+}
+
+async function loadAllocations(company, employees, startDate, endDate, onProgress) {
   const allocations = [];
   const warnings = [];
   const concurrency = 5;
@@ -114,6 +123,19 @@ async function loadAllocations(company, employees, startDate, endDate) {
       }
       allocations.push(...rows);
     });
+
+    if (onProgress) {
+      await onProgress({
+        processed: Math.min(index + batch.length, employees.length),
+        total: employees.length,
+        allocationsFound: allocations.length,
+        warnings: warnings.length,
+      });
+    }
+  }
+
+  if (employees.length === 0 && onProgress) {
+    await onProgress({ processed: 0, total: 0, allocationsFound: 0, warnings: 0 });
   }
 
   return { allocations, warnings };
@@ -158,11 +180,19 @@ export default async function handler(req, res) {
 
     runId = crypto.randomUUID();
     stage = 'criação do histórico de sincronização';
+    const startedAt = new Date().toISOString();
     const { error: runError } = await supabase.from('flash_structure_sync_runs').insert({
       id: runId,
       user_id: userId,
       status: 'running',
-      started_at: new Date().toISOString(),
+      companies_total: companies.length,
+      companies_processed: 0,
+      current_company_index: 0,
+      current_stage: 'Preparando sincronização',
+      current_company_employees_total: 0,
+      current_company_employees_processed: 0,
+      started_at: startedAt,
+      progress_updated_at: startedAt,
     });
     if (runError) throw runError;
 
@@ -174,8 +204,17 @@ export default async function handler(req, res) {
     const allWarnings = [];
     const companyResults = [];
 
-    for (const company of companies) {
+    for (let companyIndex = 0; companyIndex < companies.length; companyIndex += 1) {
+      const company = companies[companyIndex];
       stage = `consulta de colaboradores e departamentos - ${company.name}`;
+      await updateProgress(supabase, runId, {
+        current_company_index: companyIndex + 1,
+        current_company_name: company.name,
+        current_stage: 'Consultando colaboradores e departamentos',
+        current_company_employees_total: 0,
+        current_company_employees_processed: 0,
+      });
+
       const [employees, departments] = await Promise.all([
         listEmployees(company.id),
         listDepartments(company.id),
@@ -217,7 +256,25 @@ export default async function handler(req, res) {
         });
 
       stage = `consulta das escalas por colaborador - ${company.name}`;
-      const { allocations, warnings } = await loadAllocations(company, employees, window.startDate, window.endDate);
+      await updateProgress(supabase, runId, {
+        current_stage: 'Consultando escalas dos colaboradores',
+        current_company_employees_total: employees.length,
+        current_company_employees_processed: 0,
+      });
+
+      const { allocations, warnings } = await loadAllocations(
+        company,
+        employees,
+        window.startDate,
+        window.endDate,
+        async ({ processed, total }) => {
+          await updateProgress(supabase, runId, {
+            current_stage: 'Consultando escalas dos colaboradores',
+            current_company_employees_total: total,
+            current_company_employees_processed: processed,
+          });
+        },
+      );
       allWarnings.push(...warnings);
 
       const employeeNames = new Map(employeeRows.map((employee) => [employee.flash_employee_id, employee.employee_name]));
@@ -265,9 +322,28 @@ export default async function handler(req, res) {
         allocationsProcessed: allocationRows.length,
         warningCount: warnings.length,
       });
+
+      await updateProgress(supabase, runId, {
+        companies_processed: companyIndex + 1,
+        employees_processed: allEmployeeRows.length,
+        departments_processed: allDepartmentRows.length,
+        allocations_processed: allAllocationRows.length,
+        warning_count: allWarnings.length,
+        current_stage: 'Empresa concluída',
+        current_company_employees_total: employees.length,
+        current_company_employees_processed: employees.length,
+      });
     }
 
     stage = 'gravação da estrutura multiempresa';
+    await updateProgress(supabase, runId, {
+      current_company_name: null,
+      current_company_index: companies.length,
+      current_stage: 'Gravando estrutura no Supabase',
+      current_company_employees_total: 0,
+      current_company_employees_processed: 0,
+    });
+
     await Promise.all([
       upsertChunks(supabase, 'flash_departments', allDepartmentRows, 'user_id,flash_company_id,flash_department_id'),
       upsertChunks(supabase, 'flash_employees', allEmployeeRows, 'user_id,flash_company_id,flash_employee_id'),
@@ -279,10 +355,17 @@ export default async function handler(req, res) {
     const { error: finishError } = await supabase.from('flash_structure_sync_runs').update({
       status: 'completed',
       companies_processed: companies.length,
+      companies_total: companies.length,
       employees_processed: allEmployeeRows.length,
       departments_processed: allDepartmentRows.length,
       allocations_processed: allAllocationRows.length,
       warning_count: allWarnings.length,
+      current_company_index: companies.length,
+      current_company_name: null,
+      current_stage: 'Sincronização concluída',
+      current_company_employees_total: 0,
+      current_company_employees_processed: 0,
+      progress_updated_at: finishedAt,
       error_message: allWarnings.length ? `${allWarnings.length} colaborador(es) tiveram falha ao consultar escala.` : null,
       finished_at: finishedAt,
     }).eq('id', runId);
@@ -305,9 +388,12 @@ export default async function handler(req, res) {
     console.error(`Falha na sincronização da estrutura Flash [${stage}]:`, error);
 
     if (supabase && runId) {
+      const finishedAt = new Date().toISOString();
       await supabase.from('flash_structure_sync_runs').update({
         status: 'failed',
-        finished_at: new Date().toISOString(),
+        current_stage: `Falha: ${stage}`,
+        progress_updated_at: finishedAt,
+        finished_at: finishedAt,
         error_message: `[${stage}] ${String(error?.message || error)}`.slice(0, 1000),
       }).eq('id', runId);
     }
