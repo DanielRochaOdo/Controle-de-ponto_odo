@@ -47,7 +47,7 @@ const scheduleWindow = () => {
   const year = Number(today.slice(0, 4));
   return {
     startDate: `${year - 2}-01-01`,
-    endDate: `${year + 1}-12-31`,
+    endDate: today,
   };
 };
 
