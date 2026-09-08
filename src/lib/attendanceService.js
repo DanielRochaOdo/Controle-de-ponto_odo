@@ -147,10 +147,26 @@ export async function importAttendanceFromFlash(startDate, endDate) {
   });
 
   const payload = await response.json().catch(() => ({}));
+
   if (!response.ok) {
+    const diagnostics = {
+      httpStatus: response.status,
+      stage: payload.stage || null,
+      error: payload.error || null,
+      flashStatus: payload.flashStatus || null,
+      flashEndpoint: payload.flashEndpoint || null,
+      flashRequestId: payload.flashRequestId || null,
+    };
+
+    console.error('[Importação Flash] Falha:', diagnostics);
+
     const stage = payload.stage ? ` (${payload.stage})` : '';
     const flashStatus = payload.flashStatus ? ` [Flash HTTP ${payload.flashStatus}]` : '';
-    throw new Error(`${payload.error || 'Não foi possível atualizar os dados da Flash.'}${stage}${flashStatus}`);
+    const endpoint = payload.flashEndpoint ? ` [${payload.flashEndpoint}]` : '';
+    const requestId = payload.flashRequestId ? ` [request_id: ${payload.flashRequestId}]` : '';
+
+    throw new Error(`${payload.error || 'Não foi possível atualizar os dados da Flash.'}${stage}${flashStatus}${endpoint}${requestId}`);
   }
+
   return payload;
 }
