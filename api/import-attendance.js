@@ -171,26 +171,26 @@ export default async function handler(req, res) {
       { data: settingsRow, error: settingsError },
       employees,
       allocations,
-      { data: latestStructureSync, error: structureSyncError },
+      { data: employeeSyncRuns, error: structureSyncError },
     ] = await Promise.all([
       supabase.from('attendance_settings').select('*').eq('user_id', userId).maybeSingle(),
       fetchAllSyncedRows(supabase, 'flash_employees', userId, 'flash_employee_id'),
       fetchAllSyncedRows(supabase, 'employee_schedule_allocations', userId, 'allocation_start_date'),
       supabase.from('flash_structure_sync_runs')
-        .select('companies_processed,finished_at')
+        .select('company_key,finished_at')
         .eq('user_id', userId)
         .eq('status', 'completed')
-        .order('finished_at', { ascending: false })
-        .limit(1)
-        .maybeSingle(),
+        .eq('sync_target', 'employees'),
     ]);
     if (settingsError) throw settingsError;
     if (structureSyncError) throw structureSyncError;
 
-    if (!latestStructureSync || Number(latestStructureSync.companies_processed || 0) < companies.length) {
+    const companiesWithEmployeeSync = new Set((employeeSyncRuns || []).map((run) => run.company_key).filter(Boolean));
+    const companiesMissingEmployeeSync = companies.filter((company) => !companiesWithEmployeeSync.has(company.key));
+    if (companiesMissingEmployeeSync.length) {
       return res.status(409).json({
         stage: 'estrutura da Flash',
-        error: `A estrutura multiempresa ainda não foi sincronizada para as ${companies.length} empresas. Vá em Configurações e use "Sincronizar estrutura da Flash" antes de atualizar os registros.`,
+        error: `Sincronize os funcionários destas empresas antes de atualizar os registros: ${companiesMissingEmployeeSync.map((company) => company.name).join(', ')}.`,
       });
     }
 
@@ -221,7 +221,7 @@ export default async function handler(req, res) {
       stage = `validação da estrutura sincronizada - ${company.name}`;
       const unknownEmployees = findUnknownAttendanceEmployees(dailyPayloads, companyEmployees);
       if (unknownEmployees.length) {
-        throw new Error(`A empresa ${company.name} possui marcações de ${unknownEmployees.length} colaborador(es) que não existem na estrutura sincronizada. Sincronize a estrutura da Flash em Configurações e tente novamente.`);
+        throw new Error(`A empresa ${company.name} possui marcações de ${unknownEmployees.length} colaborador(es) que não existem na estrutura sincronizada. Sincronize os funcionários desta empresa em Configurações e tente novamente.`);
       }
 
       stage = `normalização previsto x realizado - ${company.name}`;
