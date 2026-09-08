@@ -3,8 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 import {
   dateRange,
   listAttendanceDay,
-  listEmployees,
-  listTimetableAllocations,
   normalizeAttendanceDay,
 } from './_lib/flash.js';
 
@@ -62,9 +60,44 @@ async function fetchDays(companyId, days) {
   return result;
 }
 
-const isOptionalTimetableError = (error) => (
-  Number(error?.status) === 400 && /user not found/i.test(String(error?.message || ''))
-);
+async function fetchAllSyncedRows(supabase, table, userId, orderColumn) {
+  const result = [];
+  const batchSize = 1000;
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .eq('user_id', userId)
+      .order(orderColumn, { ascending: true })
+      .range(offset, offset + batchSize - 1);
+    if (error) throw error;
+    const batch = data || [];
+    result.push(...batch);
+    if (batch.length < batchSize) break;
+    offset += batchSize;
+  }
+
+  return result;
+}
+
+function findUnknownAttendanceEmployees(dailyPayloads, employees) {
+  const ids = new Set(employees.map((employee) => String(employee.flash_employee_id || '')).filter(Boolean));
+  const externalIds = new Set(employees.map((employee) => String(employee.external_id || '')).filter(Boolean));
+  const missing = new Set();
+
+  dailyPayloads.forEach(({ attendance }) => {
+    attendance.forEach((item) => {
+      const employeeId = String(item?.employeeId || '');
+      const externalId = String(item?.externalId || '');
+      if ((employeeId && ids.has(employeeId)) || (externalId && externalIds.has(externalId))) return;
+      missing.add(employeeId || externalId || 'sem-identificador');
+    });
+  });
+
+  return [...missing];
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido.' });
@@ -116,8 +149,29 @@ export default async function handler(req, res) {
     if (authError || !authData?.user) return res.status(401).json({ stage, error: 'Sessão inválida ou expirada.' });
 
     const userId = authData.user.id;
-    runId = crypto.randomUUID();
 
+    stage = 'carregamento da estrutura sincronizada';
+    const [
+      { data: settingsRow, error: settingsError },
+      employees,
+      allocations,
+    ] = await Promise.all([
+      supabase.from('attendance_settings').select('*').eq('user_id', userId).maybeSingle(),
+      fetchAllSyncedRows(supabase, 'flash_employees', userId, 'flash_employee_id'),
+      fetchAllSyncedRows(supabase, 'employee_schedule_allocations', userId, 'allocation_start_date'),
+    ]);
+    if (settingsError) throw settingsError;
+
+    if (!employees.length) {
+      return res.status(409).json({
+        stage: 'estrutura da Flash',
+        error: 'A estrutura da Flash ainda não foi sincronizada. Vá em Configurações e use "Sincronizar estrutura da Flash" antes de atualizar os registros.',
+      });
+    }
+
+    const settings = { ...defaultSettings, ...(settingsRow || {}) };
+
+    runId = crypto.randomUUID();
     stage = 'criação do histórico de importação';
     const { error: runError } = await supabase.from('flash_import_runs').insert({
       id: runId,
@@ -129,39 +183,16 @@ export default async function handler(req, res) {
     });
     if (runError) throw runError;
 
-    stage = 'consulta de configurações e colaboradores';
-    const [{ data: settingsRow, error: settingsError }, employees] = await Promise.all([
-      supabase.from('attendance_settings').select('*').eq('user_id', userId).maybeSingle(),
-      listEmployees(companyId),
-    ]);
-    if (settingsError) throw settingsError;
-    const settings = { ...defaultSettings, ...(settingsRow || {}) };
-
-    let allocations = [];
-    stage = 'consulta de escalas na Flash';
-    try {
-      allocations = await listTimetableAllocations(companyId, startDate, effectiveEndDate);
-    } catch (error) {
-      if (!isOptionalTimetableError(error)) throw error;
-
-      warnings.push({
-        code: 'timetable_unavailable',
-        message: 'A Flash respondeu "User not found" ao consultar alocações de escala sem employeeId. A importação seguirá apenas com as marcações de ponto.',
-        flashStatus: error?.status || null,
-        flashEndpoint: error?.endpoint || null,
-        flashRequestId: error?.requestId || null,
-      });
-      console.warn('Flash: consulta de escalas ignorada; importação seguirá com attendance/day.', {
-        status: error?.status,
-        endpoint: error?.endpoint,
-        requestId: error?.requestId,
-      });
-    }
-
     stage = 'consulta das marcações diárias na Flash';
     const dailyPayloads = await fetchDays(companyId, days);
 
-    stage = 'normalização das marcações';
+    stage = 'validação da estrutura sincronizada';
+    const unknownEmployees = findUnknownAttendanceEmployees(dailyPayloads, employees);
+    if (unknownEmployees.length) {
+      throw new Error(`Foram encontradas marcações de ${unknownEmployees.length} colaborador(es) que não existem na estrutura sincronizada. Sincronize a estrutura da Flash em Configurações e tente novamente.`);
+    }
+
+    stage = 'normalização e comparação previsto x realizado';
     const rows = dailyPayloads.flatMap(({ day, attendance }) => normalizeAttendanceDay({
       day,
       attendance,
@@ -212,6 +243,7 @@ export default async function handler(req, res) {
       endDate: effectiveEndDate,
       requestedEndDate,
       employeesProcessed: employees.length,
+      schedulesAvailable: allocations.length,
       recordsProcessed: rows.length,
       finishedAt,
       warnings,
