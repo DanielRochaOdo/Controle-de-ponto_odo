@@ -171,18 +171,26 @@ export default async function handler(req, res) {
       { data: settingsRow, error: settingsError },
       employees,
       allocations,
+      { data: latestStructureSync, error: structureSyncError },
     ] = await Promise.all([
       supabase.from('attendance_settings').select('*').eq('user_id', userId).maybeSingle(),
       fetchAllSyncedRows(supabase, 'flash_employees', userId, 'flash_employee_id'),
       fetchAllSyncedRows(supabase, 'employee_schedule_allocations', userId, 'allocation_start_date'),
+      supabase.from('flash_structure_sync_runs')
+        .select('companies_processed,finished_at')
+        .eq('user_id', userId)
+        .eq('status', 'completed')
+        .order('finished_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ]);
     if (settingsError) throw settingsError;
+    if (structureSyncError) throw structureSyncError;
 
-    const companiesWithoutStructure = companies.filter((company) => rowsForCompany(employees, company).length === 0);
-    if (companiesWithoutStructure.length) {
+    if (!latestStructureSync || Number(latestStructureSync.companies_processed || 0) < companies.length) {
       return res.status(409).json({
         stage: 'estrutura da Flash',
-        error: `A estrutura ainda não foi sincronizada para: ${companiesWithoutStructure.map((company) => company.name).join(', ')}. Vá em Configurações e use "Sincronizar estrutura da Flash" antes de atualizar os registros.`,
+        error: `A estrutura multiempresa ainda não foi sincronizada para as ${companies.length} empresas. Vá em Configurações e use "Sincronizar estrutura da Flash" antes de atualizar os registros.`,
       });
     }
 
@@ -265,7 +273,7 @@ export default async function handler(req, res) {
         status: 'completed',
         companies_processed: companies.length,
         finished_at: finishedAt,
-        employees_processed: employees.length,
+        employees_processed: employees.filter((employee) => employee.flash_company_id).length,
         records_processed: allRows.length,
       })
       .eq('id', runId);
@@ -278,8 +286,8 @@ export default async function handler(req, res) {
       endDate: effectiveEndDate,
       requestedEndDate,
       companiesProcessed: companies.length,
-      employeesProcessed: employees.length,
-      schedulesAvailable: allocations.length,
+      employeesProcessed: employees.filter((employee) => employee.flash_company_id).length,
+      schedulesAvailable: allocations.filter((allocation) => allocation.flash_company_id).length,
       recordsProcessed: allRows.length,
       companies: companyResults,
       finishedAt,
