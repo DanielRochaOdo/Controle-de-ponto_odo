@@ -60,11 +60,10 @@ export async function saveAttendanceSettings(userId, settings) {
   return mapSettings(data);
 }
 
-function applyFilters(query, userId, filters = {}) {
+function applyFilters(query, userId, filters) {
   let next = query.eq('user_id', userId);
   if (filters.startDate) next = next.gte('work_date', filters.startDate);
   if (filters.endDate) next = next.lte('work_date', filters.endDate);
-  if (filters.search?.trim()) next = next.ilike('employee_name', `%${filters.search.trim()}%`);
   if (filters.employee && filters.employee !== 'all') next = next.eq('employee_name', filters.employee);
   if (filters.department && filters.department !== 'all') next = next.eq('department', filters.department);
   if (filters.status && filters.status !== 'all') next = next.or(`entry_status.eq.${filters.status},exit_status.eq.${filters.status}`);
@@ -81,7 +80,7 @@ export async function fetchAttendancePage(userId, filters, page = 1, pageSize = 
   return { records: data || [], count: count || 0 };
 }
 
-export async function fetchAllAttendance(userId, filters = {}) {
+export async function fetchAllAttendance(userId, filters) {
   const result = [];
   const batchSize = 1000;
   let offset = 0;
@@ -148,6 +147,10 @@ export async function importAttendanceFromFlash(startDate, endDate) {
   });
 
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'Não foi possível atualizar os dados da Flash.');
+  if (!response.ok) {
+    const stage = payload.stage ? ` (${payload.stage})` : '';
+    const flashStatus = payload.flashStatus ? ` [Flash HTTP ${payload.flashStatus}]` : '';
+    throw new Error(`${payload.error || 'Não foi possível atualizar os dados da Flash.'}${stage}${flashStatus}`);
+  }
   return payload;
 }
