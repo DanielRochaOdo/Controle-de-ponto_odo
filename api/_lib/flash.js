@@ -14,13 +14,29 @@ const asArray = (value) => Array.isArray(value) ? value : [];
 async function flashGet(baseUrl, path, query = {}) {
   const apiKey = process.env.FLASH_API_KEY;
   if (!apiKey) throw new Error('FLASH_API_KEY não configurada.');
+
   const url = new URL(String(path).replace(/^\/+/, ''), baseUrl);
   Object.entries(query).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
   });
-  const response = await fetch(url, { headers: { 'x-flash-auth': apiKey, Accept: 'application/json' } });
+
+  const response = await fetch(url, {
+    headers: {
+      'x-flash-auth': apiKey,
+      Accept: 'application/json',
+    },
+  });
+
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload?.message || `Flash API respondeu ${response.status}`);
+
+  if (!response.ok) {
+    const error = new Error(payload?.message || `Flash API respondeu ${response.status}`);
+    error.status = response.status;
+    error.endpoint = `${url.origin}${url.pathname}`;
+    error.requestId = payload?.request_id || payload?.requestId || null;
+    throw error;
+  }
+
   return payload;
 }
 
