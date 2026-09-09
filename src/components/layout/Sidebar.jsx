@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { FileText, LayoutGrid, LogOut, Menu, Moon, Settings, Sun, X } from 'lucide-react';
+import { CalendarDays, FileText, LayoutGrid, LogOut, Menu, Moon, Settings, Sun, X } from 'lucide-react';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { ODONTOART_LOGO } from '@/lib/brand';
 import { applyTheme, getStoredTheme, saveTheme } from '@/lib/theme';
@@ -8,6 +8,7 @@ import { applyTheme, getStoredTheme, saveTheme } from '@/lib/theme';
 const items = [
   { icon: LayoutGrid, label: 'Dashboard', path: '/dashboard' },
   { icon: FileText, label: 'Registros', path: '/registros' },
+  { icon: CalendarDays, label: 'Eventos', path: '/eventos' },
   { icon: Settings, label: 'Configurações', path: '/configuracoes' },
 ];
 
