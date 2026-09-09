@@ -21,17 +21,20 @@ const PANEL = 'rounded-2xl border border-[#dfe9d7] bg-white p-6 shadow-sm dark:b
 const FIELD = 'h-11 rounded-xl border border-[#cfe8bc] bg-white px-3 outline-none transition focus:border-[#57D100] focus:ring-2 focus:ring-[#57D100]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100';
 
 const TARGET_UI = {
+  departments: {
+    step: 1,
+    icon: Building,
+    description: 'Atualiza os departamentos cadastrados e seus IDs na empresa.',
+    countLabel: (run) => `${run?.departments_processed || 0} departamento(s)`,
+  },
   employees: {
+    step: 2,
     icon: Users,
-    description: 'Atualiza admissões, desligamentos e cadastro dos funcionários.',
+    description: 'Atualiza os funcionários e vincula cada um ao departamento já sincronizado.',
     countLabel: (run) => `${run?.employees_processed || 0} funcionário(s)`,
   },
-  departments: {
-    icon: Building,
-    description: 'Atualiza os cargos/departamentos cadastrados nesta empresa.',
-    countLabel: (run) => `${run?.departments_processed || 0} cargo(s) / departamento(s)`,
-  },
   schedules: {
+    step: 3,
     icon: Clock3,
     description: 'Consulta os horários de cada funcionário já sincronizado.',
     countLabel: (run) => `${run?.allocations_processed || 0} alocação(ões) de horário`,
@@ -63,11 +66,15 @@ const SyncAction = ({ company, target, run, activeSync, onSync, dateTime }) => {
   return (
     <div className="flex h-full flex-col rounded-2xl border border-[#e2ecdc] bg-[#fbfdf9] p-4 dark:border-slate-800 dark:bg-slate-950/55">
       <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#e9f8e0] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300">
+        <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#e9f8e0] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300">
           <Icon className="h-5 w-5" />
+          <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#57D100] px-1 text-[10px] font-bold text-[#064E2C]">{meta.step}</span>
         </span>
         <div className="min-w-0">
-          <h4 className="text-sm font-semibold text-[#173c2c] dark:text-slate-100">{targetMeta.label}</h4>
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-semibold text-[#173c2c] dark:text-slate-100">{targetMeta.label}</h4>
+            <span className="rounded-full bg-[#edf8e6] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300">Etapa {meta.step}</span>
+          </div>
           <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{meta.description}</p>
         </div>
       </div>
@@ -101,6 +108,9 @@ const SyncAction = ({ company, target, run, activeSync, onSync, dateTime }) => {
         )}
       </div>
 
+      {target === 'employees' && (
+        <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">Requer os departamentos desta empresa sincronizados anteriormente.</p>
+      )}
       {target === 'schedules' && (
         <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">Requer funcionários sincronizados anteriormente nesta empresa.</p>
       )}
@@ -215,7 +225,7 @@ const Configuracoes = () => {
 
       const descriptions = {
         employees: `${result.employeesProcessed} funcionário(s) atualizado(s).`,
-        departments: `${result.departmentsProcessed} cargo(s) / departamento(s) atualizado(s).`,
+        departments: `${result.departmentsProcessed} departamento(s) atualizado(s).`,
         schedules: `${result.allocationsProcessed} alocação(ões) de horário atualizada(s) para ${result.employeesProcessed} funcionário(s).`,
       };
       const warning = result.warningCount ? ` ${result.warningCount} consulta(s) de horário tiveram aviso.` : '';
@@ -309,13 +319,30 @@ const Configuracoes = () => {
             <section className="rounded-2xl border border-[#cfe8bf] bg-[linear-gradient(110deg,#f3fced_0%,#ffffff_70%,#f4fbef_100%)] p-6 shadow-sm dark:border-emerald-900/60 dark:bg-none dark:bg-emerald-950/20">
               <div className="flex items-start gap-4">
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e7f7dc] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300"><RefreshCw className="h-6 w-6" /></span>
-                <div>
+                <div className="w-full">
                   <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Sincronização por empresa</h2>
-                  <p className="mt-1 max-w-4xl text-sm leading-6 text-[#63796b] dark:text-slate-400">Atualize somente o recurso que realmente mudou. Funcionários, cargos/departamentos e horários são independentes; isso reduz o volume de chamadas à Flash e deixa a manutenção mais previsível.</p>
+                  <p className="mt-1 max-w-4xl text-sm leading-6 text-[#63796b] dark:text-slate-400">Atualize somente o recurso que realmente mudou para reduzir chamadas à Flash e manter a estrutura de cada empresa atualizada.</p>
+
+                  <div className="mt-4 rounded-xl border border-[#d8ebcd] bg-white/80 px-4 py-3 dark:border-emerald-900/50 dark:bg-slate-900/70">
+                    <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-[#2f8f17] dark:text-emerald-300">Ordem recomendada na carga inicial</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm font-medium text-[#294436] dark:text-slate-200">
+                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">1. Departamentos</span>
+                          <span className="text-slate-400">→</span>
+                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">2. Funcionários</span>
+                          <span className="text-slate-400">→</span>
+                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">3. Horários</span>
+                        </div>
+                      </div>
+                      <p className="max-w-xl text-xs leading-5 text-slate-500 dark:text-slate-400">Depois da primeira carga completa, não é necessário repetir as três etapas sempre. Se apenas um recurso mudou, sincronize somente ele, respeitando as dependências indicadas nos cards.</p>
+                    </div>
+                  </div>
+
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full bg-white px-3 py-1.5 font-medium text-[#2f8f17] shadow-sm dark:bg-slate-900 dark:text-emerald-300">9 empresas</span>
-                    <span className="rounded-full bg-white px-3 py-1.5 text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">3 ações independentes por empresa</span>
-                    <span className="rounded-full bg-white px-3 py-1.5 text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">Horários usam funcionários já sincronizados</span>
+                    <span className="rounded-full bg-white px-3 py-1.5 text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">3 etapas por empresa</span>
+                    <span className="rounded-full bg-white px-3 py-1.5 text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">Atualização seletiva após a carga inicial</span>
                   </div>
                 </div>
               </div>
@@ -336,7 +363,7 @@ const Configuracoes = () => {
                   </div>
 
                   <div className="mt-5 grid gap-3 lg:grid-cols-3">
-                    {['employees', 'departments', 'schedules'].map((target) => (
+                    {['departments', 'employees', 'schedules'].map((target) => (
                       <SyncAction
                         key={target}
                         company={company}
