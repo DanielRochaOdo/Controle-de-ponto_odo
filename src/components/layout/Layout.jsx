@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 
-const PERSISTED_FILTER_ROUTES = new Set(['/dashboard', '/registros']);
+const PERSISTED_FILTER_ROUTES = new Set(['/dashboard', '/registros', '/eventos']);
 const FILTER_SELECTOR = 'input[type="month"], input[type="search"], input[type="text"], select';
 
 const getFilterFields = () => Array.from(document.querySelectorAll(`main ${FILTER_SELECTOR}`));
