@@ -68,26 +68,27 @@ const Sidebar = () => {
           <p className="mt-1 truncate text-sm font-semibold text-[#173c2c] dark:text-slate-100" title={displayName}>{displayName}</p>
         </div>
 
-        <div className="mb-2 flex justify-center">
+        <div className="space-y-1">
           <button
             type="button"
             onClick={toggleTheme}
             aria-label={theme === 'dark' ? 'Ativar tema claro' : 'Ativar tema escuro'}
             title={theme === 'dark' ? 'Tema claro' : 'Tema escuro'}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-[#52705f] transition hover:bg-[#eef8e7] hover:text-[#065F2F] dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-emerald-300"
+            className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-[#50665a] transition hover:bg-[#f4faef] hover:text-[#065F2F] dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
           >
             {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            <span>{theme === 'dark' ? 'Tema claro' : 'Tema escuro'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={signOut}
+            className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-[#50665a] transition hover:bg-[#f4faef] hover:text-[#065F2F] dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+          >
+            <LogOut className="h-5 w-5" />
+            Sair
           </button>
         </div>
-
-        <button
-          type="button"
-          onClick={signOut}
-          className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-[#50665a] transition hover:bg-[#f4faef] hover:text-[#065F2F] dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
-        >
-          <LogOut className="h-5 w-5" />
-          Sair
-        </button>
       </div>
     </div>
   );
