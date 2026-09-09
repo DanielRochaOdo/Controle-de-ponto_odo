@@ -19,6 +19,12 @@ import { TimeRecordStatus } from '@/types';
 const STATUSES = [TimeRecordStatus.ON_TIME, TimeRecordStatus.LATE, TimeRecordStatus.LATE_EXIT, TimeRecordStatus.EARLY, TimeRecordStatus.ADJUSTED];
 const PANEL = 'rounded-2xl border border-[#dfe9d7] bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900';
 const FIELD = 'h-11 rounded-xl border border-[#cfe8bc] bg-white px-3 outline-none transition focus:border-[#57D100] focus:ring-2 focus:ring-[#57D100]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100';
+const CONFIG_TAB_KEY = 'controle-ponto:configuracoes:tab';
+
+const initialConfigTab = () => {
+  if (typeof window === 'undefined') return 'general';
+  return window.sessionStorage.getItem(CONFIG_TAB_KEY) === 'flash' ? 'flash' : 'general';
+};
 
 const TARGET_UI = {
   employees: {
@@ -130,7 +136,7 @@ const SyncAction = ({ company, target, run, activeSync, onSync, dateTime }) => {
 const Configuracoes = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState('general');
+  const [activeTab, setActiveTab] = useState(initialConfigTab);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [latestImport, setLatestImport] = useState(null);
   const [syncRuns, setSyncRuns] = useState([]);
@@ -143,6 +149,10 @@ const Configuracoes = () => {
     setSyncRuns(rows);
     return rows;
   };
+
+  useEffect(() => {
+    window.sessionStorage.setItem(CONFIG_TAB_KEY, activeTab);
+  }, [activeTab]);
 
   useEffect(() => {
     if (!user) return;
@@ -323,24 +333,20 @@ const Configuracoes = () => {
             <section className="rounded-2xl border border-[#cfe8bf] bg-[linear-gradient(110deg,#f3fced_0%,#ffffff_70%,#f4fbef_100%)] p-6 shadow-sm dark:border-emerald-900/60 dark:bg-none dark:bg-emerald-950/20">
               <div className="flex items-start gap-4">
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e7f7dc] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300"><RefreshCw className="h-6 w-6" /></span>
-                <div className="w-full">
+                <div className="w-full min-w-0">
                   <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Sincronização por empresa</h2>
-                  <p className="mt-1 max-w-4xl text-sm leading-6 text-[#63796b] dark:text-slate-400">Atualize somente o recurso que realmente mudou para reduzir chamadas à Flash e manter a estrutura de cada empresa atualizada.</p>
+                  <p className="mt-1 max-w-4xl text-sm leading-6 text-[#63796b] dark:text-slate-300">Atualize somente o recurso que realmente mudou para reduzir chamadas à Flash e manter a estrutura de cada empresa atualizada.</p>
 
-                  <div className="mt-4 rounded-xl border border-[#d8ebcd] bg-white/80 px-4 py-3 dark:border-emerald-900/50 dark:bg-slate-900/70">
-                    <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-[#2f8f17] dark:text-emerald-300">Ordem recomendada na carga inicial</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm font-medium text-[#294436] dark:text-slate-200">
-                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">1. Funcionários</span>
-                          <span className="text-slate-400">→</span>
-                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">2. Departamentos</span>
-                          <span className="text-slate-400">→</span>
-                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">3. Horários</span>
-                        </div>
-                      </div>
-                      <p className="max-w-xl text-xs leading-5 text-slate-500 dark:text-slate-400">Funcionários grava os IDs de departamento recebidos da Flash. Departamentos resolve esses IDs para nomes e atualiza os vínculos. Depois da carga inicial, sincronize somente o recurso que mudou.</p>
+                  <div className="mt-4 rounded-xl border border-[#d8ebcd] bg-white/80 px-4 py-3 dark:border-emerald-900/60 dark:bg-slate-950/70">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#2f8f17] dark:text-emerald-300">Ordem recomendada na carga inicial</p>
+                    <div className="mt-2 flex items-center gap-2 overflow-x-auto whitespace-nowrap pb-1 text-sm font-medium text-[#294436]">
+                      <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1 text-[#294436] dark:bg-emerald-950 dark:text-emerald-200">1. Funcionários</span>
+                      <span className="text-slate-400 dark:text-slate-500">→</span>
+                      <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1 text-[#294436] dark:bg-emerald-950 dark:text-emerald-200">2. Departamentos</span>
+                      <span className="text-slate-400 dark:text-slate-500">→</span>
+                      <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1 text-[#294436] dark:bg-emerald-950 dark:text-emerald-200">3. Horários</span>
                     </div>
+                    <p className="mt-2 max-w-4xl text-xs leading-5 text-slate-500 dark:text-slate-300">Funcionários grava os IDs de departamento recebidos da Flash. Departamentos resolve esses IDs para nomes e atualiza os vínculos. Depois da carga inicial, sincronize somente o recurso que mudou.</p>
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
