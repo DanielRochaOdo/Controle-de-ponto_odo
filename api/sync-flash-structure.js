@@ -10,6 +10,7 @@ import { getFlashCompanies } from './_lib/flashCompanies.js';
 
 const VALID_TARGETS = new Set(['employees', 'departments', 'schedules']);
 const FLASH_ATTENDANCE_BASE_URL = 'https://api.flashapp.services/time-and-attendance/v1/';
+const SCHEDULE_HISTORY_START = '2026-01-01';
 
 const getServerClient = () => {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -45,11 +46,26 @@ const dateForTimezone = (date, timeZone) => {
   return `${year}-${month}-${day}`;
 };
 
-const scheduleWindow = () => {
+const scheduleWindows = () => {
   const timeZone = process.env.APP_TIMEZONE || 'America/Fortaleza';
   const today = dateForTimezone(new Date(), timeZone);
-  const year = Number(today.slice(0, 4));
-  return { startDate: `${year - 2}-01-01`, endDate: today };
+  const currentMonth = today.slice(0, 7);
+  const windows = [];
+  const cursor = new Date(`${SCHEDULE_HISTORY_START}T12:00:00Z`);
+
+  while (cursor.toISOString().slice(0, 7) <= currentMonth) {
+    const year = cursor.getUTCFullYear();
+    const monthIndex = cursor.getUTCMonth();
+    const month = String(monthIndex + 1).padStart(2, '0');
+    const startDate = `${year}-${month}-01`;
+    const monthEnd = new Date(Date.UTC(year, monthIndex + 1, 0, 12)).toISOString().slice(0, 10);
+    const endDate = startDate.slice(0, 7) === currentMonth ? today : monthEnd;
+
+    windows.push({ month: startDate.slice(0, 7), startDate, endDate });
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+
+  return windows;
 };
 
 const sanitizeEmployee = (employee) => {
@@ -207,61 +223,123 @@ async function listTimetableAllocationsByExternalId(companyId, startDate, endDat
   return Array.isArray(payload?.data) ? payload.data : [];
 }
 
-async function loadScheduleAllocations(company, employees, startDate, endDate, onProgress) {
+const isNoTimetableError = (error) => /timetables?\s+(default|allocations?)\s+not\s+found/i.test(String(error?.message || ''));
+
+async function loadEmployeeScheduleWindow(company, employee, window) {
+  const employeeId = String(employee?.flash_employee_id || '');
+  const externalId = String(employee?.external_id || '');
+
+  if (!employeeId && !externalId) {
+    return {
+      rows: [],
+      errors: [{ window, error: new Error('Colaborador sem employeeId e externalId sincronizados.') }],
+      fallbackUsed: false,
+      empty: false,
+    };
+  }
+
+  if (employeeId) {
+    try {
+      const rows = await listTimetableAllocations(company.id, window.startDate, window.endDate, employeeId);
+      return { rows, errors: [], fallbackUsed: false, empty: rows.length === 0 };
+    } catch (employeeIdError) {
+      if (isNoTimetableError(employeeIdError)) {
+        return { rows: [], errors: [], fallbackUsed: false, empty: true };
+      }
+
+      if (!externalId) {
+        return { rows: [], errors: [{ window, error: employeeIdError }], fallbackUsed: false, empty: false };
+      }
+
+      try {
+        const rows = await listTimetableAllocationsByExternalId(company.id, window.startDate, window.endDate, externalId);
+        return { rows, errors: [], fallbackUsed: true, empty: rows.length === 0 };
+      } catch (externalIdError) {
+        if (isNoTimetableError(externalIdError)) {
+          return { rows: [], errors: [], fallbackUsed: true, empty: true };
+        }
+        externalIdError.message = `employeeId: ${employeeIdError?.message || 'falhou'}; externalId: ${externalIdError?.message || 'falhou'}`;
+        return { rows: [], errors: [{ window, error: externalIdError }], fallbackUsed: true, empty: false };
+      }
+    }
+  }
+
+  try {
+    const rows = await listTimetableAllocationsByExternalId(company.id, window.startDate, window.endDate, externalId);
+    return { rows, errors: [], fallbackUsed: true, empty: rows.length === 0 };
+  } catch (error) {
+    if (isNoTimetableError(error)) {
+      return { rows: [], errors: [], fallbackUsed: true, empty: true };
+    }
+    return { rows: [], errors: [{ window, error }], fallbackUsed: true, empty: false };
+  }
+}
+
+const allocationDedupKey = (allocation) => {
+  if (allocation?.allocationId !== undefined && allocation?.allocationId !== null) {
+    return `allocation:${allocation.allocationId}`;
+  }
+  return [
+    allocation?.employeeId || allocation?.externalId || 'unknown',
+    allocation?.timetableId || 'unknown',
+    String(allocation?.allocationStartDate || '').slice(0, 10) || 'unknown',
+  ].join(':');
+};
+
+async function loadScheduleAllocations(company, employees, windows, onProgress) {
   const allocations = [];
   const warnings = [];
   let externalIdFallbacks = 0;
+  let monthQueries = 0;
+  let emptyMonths = 0;
   const concurrency = 5;
 
   for (let index = 0; index < employees.length; index += concurrency) {
     const batch = employees.slice(index, index + concurrency);
     const results = await Promise.all(batch.map(async (employee) => {
-      const employeeId = String(employee?.flash_employee_id || '');
-      const externalId = String(employee?.external_id || '');
-      if (!employeeId && !externalId) {
-        return { employee, rows: [], error: new Error('Colaborador sem employeeId e externalId sincronizados.'), fallbackUsed: false };
+      const rows = [];
+      const errors = [];
+      let fallbackCount = 0;
+      let checkedMonths = 0;
+      let employeeEmptyMonths = 0;
+
+      for (const window of windows) {
+        checkedMonths += 1;
+        const result = await loadEmployeeScheduleWindow(company, employee, window);
+        rows.push(...result.rows);
+        errors.push(...result.errors);
+        if (result.fallbackUsed) fallbackCount += 1;
+        if (result.empty) employeeEmptyMonths += 1;
       }
 
-      if (employeeId) {
-        try {
-          const rows = await listTimetableAllocations(company.id, startDate, endDate, employeeId);
-          return { employee, rows, error: null, fallbackUsed: false };
-        } catch (employeeIdError) {
-          if (!externalId) return { employee, rows: [], error: employeeIdError, fallbackUsed: false };
-
-          try {
-            const rows = await listTimetableAllocationsByExternalId(company.id, startDate, endDate, externalId);
-            return { employee, rows, error: null, fallbackUsed: true };
-          } catch (externalIdError) {
-            externalIdError.message = `employeeId: ${employeeIdError?.message || 'falhou'}; externalId: ${externalIdError?.message || 'falhou'}`;
-            return { employee, rows: [], error: externalIdError, fallbackUsed: true };
-          }
-        }
-      }
-
-      try {
-        const rows = await listTimetableAllocationsByExternalId(company.id, startDate, endDate, externalId);
-        return { employee, rows, error: null, fallbackUsed: true };
-      } catch (error) {
-        return { employee, rows: [], error, fallbackUsed: true };
-      }
+      return {
+        employee,
+        rows,
+        errors,
+        fallbackCount,
+        checkedMonths,
+        emptyMonths: employeeEmptyMonths,
+      };
     }));
 
-    results.forEach(({ employee, rows, error, fallbackUsed }) => {
-      if (fallbackUsed && !error) externalIdFallbacks += 1;
-      if (error) {
+    results.forEach(({ employee, rows, errors, fallbackCount, checkedMonths, emptyMonths: employeeEmptyMonths }) => {
+      allocations.push(...rows);
+      externalIdFallbacks += fallbackCount;
+      monthQueries += checkedMonths;
+      emptyMonths += employeeEmptyMonths;
+
+      errors.forEach(({ window, error }) => {
         warnings.push({
           employeeId: employee?.flash_employee_id || null,
           externalId: employee?.external_id || null,
           employeeName: employee?.employee_name || null,
+          month: window.month,
           message: error?.message || 'Falha ao consultar horário.',
           flashStatus: error?.status || null,
           flashEndpoint: error?.endpoint || null,
           flashRequestId: error?.requestId || null,
         });
-        return;
-      }
-      allocations.push(...rows);
+      });
     });
 
     await onProgress({
@@ -270,10 +348,21 @@ async function loadScheduleAllocations(company, employees, startDate, endDate, o
       allocationsFound: allocations.length,
       warnings: warnings.length,
       externalIdFallbacks,
+      monthQueries,
+      emptyMonths,
     });
   }
 
-  return { allocations, warnings, externalIdFallbacks };
+  const uniqueAllocations = new Map();
+  allocations.forEach((allocation) => uniqueAllocations.set(allocationDedupKey(allocation), allocation));
+
+  return {
+    allocations: [...uniqueAllocations.values()],
+    warnings,
+    externalIdFallbacks,
+    monthQueries,
+    emptyMonths,
+  };
 }
 
 async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
@@ -409,21 +498,34 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
     throw error;
   }
 
-  const window = scheduleWindow();
+  const windows = scheduleWindows();
+  const firstWindow = windows[0];
+  const lastWindow = windows[windows.length - 1];
+  const windowSummary = {
+    startDate: firstWindow?.startDate || SCHEDULE_HISTORY_START,
+    endDate: lastWindow?.endDate || SCHEDULE_HISTORY_START,
+    months: windows.length,
+  };
+
   await updateRun(supabase, runId, {
-    current_stage: 'Consultando horários dos funcionários',
+    current_stage: `Consultando horários mês a mês desde jan/2026 (${windows.length} competências)`,
     current_company_employees_total: employees.length,
     current_company_employees_processed: 0,
   });
 
-  const { allocations, warnings, externalIdFallbacks } = await loadScheduleAllocations(
+  const {
+    allocations,
+    warnings,
+    externalIdFallbacks,
+    monthQueries,
+    emptyMonths,
+  } = await loadScheduleAllocations(
     company,
     employees,
-    window.startDate,
-    window.endDate,
+    windows,
     async ({ processed, total, allocationsFound, warnings: warningCount }) => {
       await updateRun(supabase, runId, {
-        current_stage: 'Consultando horários dos funcionários',
+        current_stage: `Consultando horários mês a mês desde jan/2026 (${windows.length} competências)`,
         current_company_employees_total: total,
         current_company_employees_processed: processed,
         allocations_processed: allocationsFound,
@@ -482,7 +584,9 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
     warningCount: warnings.length,
     warnings,
     externalIdFallbacks,
-    scheduleWindow: window,
+    monthQueries,
+    emptyMonths,
+    scheduleWindow: windowSummary,
   };
 }
 
@@ -555,7 +659,7 @@ export default async function handler(req, res) {
     const firstWarning = result.warnings?.[0] || null;
     const errorMessage = result.warningCount
       ? target === 'schedules'
-        ? `${result.warningCount} funcionário(s) tiveram falha ao consultar horário. Primeiro aviso: ${firstWarning?.employeeName || 'colaborador'} — ${firstWarning?.message || 'falha não detalhada'}${firstWarning?.flashStatus ? ` [Flash HTTP ${firstWarning.flashStatus}]` : ''}`.slice(0, 1000)
+        ? `${result.warningCount} consulta(s) mensal(is) tiveram falha ao consultar horário. Primeiro aviso: ${firstWarning?.employeeName || 'colaborador'}${firstWarning?.month ? ` (${firstWarning.month})` : ''} — ${firstWarning?.message || 'falha não detalhada'}${firstWarning?.flashStatus ? ` [Flash HTTP ${firstWarning.flashStatus}]` : ''}`.slice(0, 1000)
         : `${result.warningCount} aviso(s) de vínculo cadastral.`
       : null;
 
@@ -586,6 +690,8 @@ export default async function handler(req, res) {
       warningCount: result.warningCount,
       warnings: result.warnings.slice(0, 20),
       externalIdFallbacks: result.externalIdFallbacks || 0,
+      monthQueries: result.monthQueries || 0,
+      emptyMonths: result.emptyMonths || 0,
       departmentLinks: result.departmentLinks || null,
       scheduleWindow: result.scheduleWindow || null,
       finishedAt,
