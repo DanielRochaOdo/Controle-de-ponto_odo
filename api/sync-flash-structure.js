@@ -9,6 +9,7 @@ import {
 import { getFlashCompanies } from './_lib/flashCompanies.js';
 
 const VALID_TARGETS = new Set(['employees', 'departments', 'schedules']);
+const FLASH_ATTENDANCE_BASE_URL = 'https://api.flashapp.services/time-and-attendance/v1/';
 
 const getServerClient = () => {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -177,28 +178,81 @@ async function backfillEmployeeDepartments(supabase, userId, companyId, departme
   return updated;
 }
 
+async function listTimetableAllocationsByExternalId(companyId, startDate, endDate, externalId) {
+  const apiKey = process.env.FLASH_API_KEY;
+  if (!apiKey) throw new Error('FLASH_API_KEY não configurada.');
+
+  const url = new URL('timetables/allocations', FLASH_ATTENDANCE_BASE_URL);
+  url.searchParams.set('companyId', String(companyId));
+  url.searchParams.set('startDate', `${startDate}T00:00:00.000Z`);
+  url.searchParams.set('endDate', `${endDate}T23:59:59.999Z`);
+  url.searchParams.set('externalId', String(externalId));
+
+  const response = await fetch(url, {
+    headers: {
+      'x-flash-auth': apiKey,
+      Accept: 'application/json',
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(payload?.message || `Flash API respondeu ${response.status}`);
+    error.status = response.status;
+    error.endpoint = `${url.origin}${url.pathname}`;
+    error.requestId = payload?.request_id || payload?.requestId || null;
+    throw error;
+  }
+
+  return Array.isArray(payload?.data) ? payload.data : [];
+}
+
 async function loadScheduleAllocations(company, employees, startDate, endDate, onProgress) {
   const allocations = [];
   const warnings = [];
+  let externalIdFallbacks = 0;
   const concurrency = 5;
 
   for (let index = 0; index < employees.length; index += concurrency) {
     const batch = employees.slice(index, index + concurrency);
     const results = await Promise.all(batch.map(async (employee) => {
       const employeeId = String(employee?.flash_employee_id || '');
-      if (!employeeId) return { employee, rows: [], error: new Error('Colaborador sem employeeId sincronizado.') };
+      const externalId = String(employee?.external_id || '');
+      if (!employeeId && !externalId) {
+        return { employee, rows: [], error: new Error('Colaborador sem employeeId e externalId sincronizados.'), fallbackUsed: false };
+      }
+
+      if (employeeId) {
+        try {
+          const rows = await listTimetableAllocations(company.id, startDate, endDate, employeeId);
+          return { employee, rows, error: null, fallbackUsed: false };
+        } catch (employeeIdError) {
+          if (!externalId) return { employee, rows: [], error: employeeIdError, fallbackUsed: false };
+
+          try {
+            const rows = await listTimetableAllocationsByExternalId(company.id, startDate, endDate, externalId);
+            return { employee, rows, error: null, fallbackUsed: true };
+          } catch (externalIdError) {
+            externalIdError.message = `employeeId: ${employeeIdError?.message || 'falhou'}; externalId: ${externalIdError?.message || 'falhou'}`;
+            return { employee, rows: [], error: externalIdError, fallbackUsed: true };
+          }
+        }
+      }
+
       try {
-        const rows = await listTimetableAllocations(company.id, startDate, endDate, employeeId);
-        return { employee, rows, error: null };
+        const rows = await listTimetableAllocationsByExternalId(company.id, startDate, endDate, externalId);
+        return { employee, rows, error: null, fallbackUsed: true };
       } catch (error) {
-        return { employee, rows: [], error };
+        return { employee, rows: [], error, fallbackUsed: true };
       }
     }));
 
-    results.forEach(({ employee, rows, error }) => {
+    results.forEach(({ employee, rows, error, fallbackUsed }) => {
+      if (fallbackUsed && !error) externalIdFallbacks += 1;
       if (error) {
         warnings.push({
           employeeId: employee?.flash_employee_id || null,
+          externalId: employee?.external_id || null,
           employeeName: employee?.employee_name || null,
           message: error?.message || 'Falha ao consultar horário.',
           flashStatus: error?.status || null,
@@ -215,10 +269,11 @@ async function loadScheduleAllocations(company, employees, startDate, endDate, o
       total: employees.length,
       allocationsFound: allocations.length,
       warnings: warnings.length,
+      externalIdFallbacks,
     });
   }
 
-  return { allocations, warnings };
+  return { allocations, warnings, externalIdFallbacks };
 }
 
 async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
@@ -361,7 +416,7 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
     current_company_employees_processed: 0,
   });
 
-  const { allocations, warnings } = await loadScheduleAllocations(
+  const { allocations, warnings, externalIdFallbacks } = await loadScheduleAllocations(
     company,
     employees,
     window.startDate,
@@ -382,9 +437,14 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
   const common = companyFields(company);
 
   const rows = allocations
-    .filter((allocation) => allocation?.employeeId)
+    .filter((allocation) => allocation?.employeeId || allocation?.externalId)
     .map((allocation) => {
-      const employeeId = String(allocation.employeeId);
+      const allocationEmployeeId = String(allocation.employeeId || '');
+      const allocationExternalId = String(allocation.externalId || '');
+      const matchedEmployee = allocationEmployeeId
+        ? employees.find((employee) => String(employee.flash_employee_id) === allocationEmployeeId)
+        : employees.find((employee) => String(employee.external_id || '') === allocationExternalId);
+      const employeeId = allocationEmployeeId || String(matchedEmployee?.flash_employee_id || '');
       const parsed = parseTimetableName(allocation.timetableName);
       const allocationStartDate = String(allocation.allocationStartDate || '').slice(0, 10) || null;
       const identity = allocation.allocationId
@@ -394,10 +454,10 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
       return {
         user_id: userId,
         ...common,
-        source_key: `${company.id}:${employeeId}:${identity}`,
-        flash_employee_id: employeeId,
-        external_id: allocation.externalId || employeeExternalIds.get(employeeId) || null,
-        employee_name: allocation.employeeName || employeeNames.get(employeeId) || null,
+        source_key: `${company.id}:${employeeId || allocationExternalId}:${identity}`,
+        flash_employee_id: employeeId || null,
+        external_id: allocationExternalId || employeeExternalIds.get(employeeId) || matchedEmployee?.external_id || null,
+        employee_name: allocation.employeeName || employeeNames.get(employeeId) || matchedEmployee?.employee_name || null,
         timetable_id: Number.isFinite(Number(allocation.timetableId)) ? Number(allocation.timetableId) : null,
         timetable_name: allocation.timetableName || null,
         allocation_id: Number.isFinite(Number(allocation.allocationId)) ? Number(allocation.allocationId) : null,
@@ -421,6 +481,7 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
     allocationsProcessed: rows.length,
     warningCount: warnings.length,
     warnings,
+    externalIdFallbacks,
     scheduleWindow: window,
   };
 }
@@ -491,9 +552,10 @@ export default async function handler(req, res) {
     if (target === 'schedules') result = await syncSchedules({ supabase, userId, company, runId, syncedAt });
 
     const finishedAt = new Date().toISOString();
+    const firstWarning = result.warnings?.[0] || null;
     const errorMessage = result.warningCount
       ? target === 'schedules'
-        ? `${result.warningCount} funcionário(s) tiveram falha ao consultar horário.`
+        ? `${result.warningCount} funcionário(s) tiveram falha ao consultar horário. Primeiro aviso: ${firstWarning?.employeeName || 'colaborador'} — ${firstWarning?.message || 'falha não detalhada'}${firstWarning?.flashStatus ? ` [Flash HTTP ${firstWarning.flashStatus}]` : ''}`.slice(0, 1000)
         : `${result.warningCount} aviso(s) de vínculo cadastral.`
       : null;
 
@@ -523,6 +585,7 @@ export default async function handler(req, res) {
       allocationsProcessed: result.allocationsProcessed,
       warningCount: result.warningCount,
       warnings: result.warnings.slice(0, 20),
+      externalIdFallbacks: result.externalIdFallbacks || 0,
       departmentLinks: result.departmentLinks || null,
       scheduleWindow: result.scheduleWindow || null,
       finishedAt,
