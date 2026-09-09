@@ -21,17 +21,17 @@ const PANEL = 'rounded-2xl border border-[#dfe9d7] bg-white p-6 shadow-sm dark:b
 const FIELD = 'h-11 rounded-xl border border-[#cfe8bc] bg-white px-3 outline-none transition focus:border-[#57D100] focus:ring-2 focus:ring-[#57D100]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100';
 
 const TARGET_UI = {
-  departments: {
-    step: 1,
-    icon: Building,
-    description: 'Atualiza os departamentos cadastrados e seus IDs na empresa.',
-    countLabel: (run) => `${run?.departments_processed || 0} departamento(s)`,
-  },
   employees: {
-    step: 2,
+    step: 1,
     icon: Users,
-    description: 'Atualiza os funcionários e vincula cada um ao departamento já sincronizado.',
+    description: 'Atualiza os funcionários e captura o ID do departamento informado pela Flash.',
     countLabel: (run) => `${run?.employees_processed || 0} funcionário(s)`,
+  },
+  departments: {
+    step: 2,
+    icon: Building,
+    description: 'Atualiza os departamentos e vincula seus nomes aos funcionários pelo ID.',
+    countLabel: (run) => `${run?.departments_processed || 0} departamento(s)`,
   },
   schedules: {
     step: 3,
@@ -108,8 +108,8 @@ const SyncAction = ({ company, target, run, activeSync, onSync, dateTime }) => {
         )}
       </div>
 
-      {target === 'employees' && (
-        <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">Requer os departamentos desta empresa sincronizados anteriormente.</p>
+      {target === 'departments' && (
+        <p className="mt-2 text-[11px] leading-4 text-slate-500 dark:text-slate-400">Se os funcionários já estiverem sincronizados, os nomes dos departamentos são vinculados automaticamente pelos IDs.</p>
       )}
       {target === 'schedules' && (
         <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">Requer funcionários sincronizados anteriormente nesta empresa.</p>
@@ -228,7 +228,11 @@ const Configuracoes = () => {
         departments: `${result.departmentsProcessed} departamento(s) atualizado(s).`,
         schedules: `${result.allocationsProcessed} alocação(ões) de horário atualizada(s) para ${result.employeesProcessed} funcionário(s).`,
       };
-      const warning = result.warningCount ? ` ${result.warningCount} consulta(s) de horário tiveram aviso.` : '';
+      const warning = result.warningCount
+        ? target === 'schedules'
+          ? ` ${result.warningCount} consulta(s) de horário tiveram aviso.`
+          : ` ${result.warningCount} aviso(s) de vínculo cadastral.`
+        : '';
       toast({ title: `${company.name} sincronizada`, description: `${descriptions[target]}${warning}` });
     } catch (error) {
       await loadSyncRuns().catch(() => null);
@@ -328,14 +332,14 @@ const Configuracoes = () => {
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-[#2f8f17] dark:text-emerald-300">Ordem recomendada na carga inicial</p>
                         <div className="mt-2 flex flex-wrap items-center gap-2 text-sm font-medium text-[#294436] dark:text-slate-200">
-                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">1. Departamentos</span>
+                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">1. Funcionários</span>
                           <span className="text-slate-400">→</span>
-                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">2. Funcionários</span>
+                          <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">2. Departamentos</span>
                           <span className="text-slate-400">→</span>
                           <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1">3. Horários</span>
                         </div>
                       </div>
-                      <p className="max-w-xl text-xs leading-5 text-slate-500 dark:text-slate-400">Depois da primeira carga completa, não é necessário repetir as três etapas sempre. Se apenas um recurso mudou, sincronize somente ele, respeitando as dependências indicadas nos cards.</p>
+                      <p className="max-w-xl text-xs leading-5 text-slate-500 dark:text-slate-400">Funcionários grava os IDs de departamento recebidos da Flash. Departamentos resolve esses IDs para nomes e atualiza os vínculos. Depois da carga inicial, sincronize somente o recurso que mudou.</p>
                     </div>
                   </div>
 
@@ -363,7 +367,7 @@ const Configuracoes = () => {
                   </div>
 
                   <div className="mt-5 grid gap-3 lg:grid-cols-3">
-                    {['departments', 'employees', 'schedules'].map((target) => (
+                    {['employees', 'departments', 'schedules'].map((target) => (
                       <SyncAction
                         key={target}
                         company={company}
