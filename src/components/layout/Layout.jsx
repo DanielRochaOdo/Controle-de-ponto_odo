@@ -91,8 +91,8 @@ const Layout = ({ children }) => {
   return (
     <div className="min-h-screen bg-[#f7faf5] text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
       <Sidebar />
-      <main className="lg:pl-60">
-        <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8">
+      <main className="min-w-0 overflow-x-hidden lg:pl-60">
+        <div className="mx-auto min-w-0 w-full max-w-[1600px] p-4 sm:p-6 lg:p-8">
           {children}
         </div>
       </main>
