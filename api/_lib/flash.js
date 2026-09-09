@@ -57,7 +57,8 @@ export async function listEmployees(companyId) {
 
 export async function listDepartments(companyId) {
   const payload = await flashGet(FLASH_CORE_BASE_URL, 'departments', { companyId });
-  return asArray(payload?.records);
+  if (Array.isArray(payload)) return payload;
+  return asArray(payload?.records || payload?.data);
 }
 
 export async function listTimetableAllocations(companyId, startDate, endDate, employeeId = null) {
