@@ -1,5 +1,6 @@
 import { format } from 'date-fns';
 import { supabase } from '@/lib/customSupabaseClient';
+import { FLASH_COMPANY_CATALOG } from '@/lib/flashCompanyCatalog';
 import { StatusColors, TimeRecordStatus } from '@/types';
 
 export const STATUS_LABELS = {
@@ -105,13 +106,19 @@ export async function fetchAllAttendance(userId, filters) {
   return result;
 }
 
+const uniqueSorted = (values) => [...new Set(values.filter(Boolean).map((value) => String(value).trim()).filter(Boolean))]
+  .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
 export async function fetchFilterOptions(userId) {
   const { data, error } = await supabase.rpc('get_attendance_filter_options', { p_user_id: userId });
   if (error) throw error;
+
+  const catalogCompanies = FLASH_COMPANY_CATALOG.map((company) => company.name);
+
   return {
-    companies: data?.companies || [],
-    employees: data?.employees || [],
-    departments: data?.departments || [],
+    companies: uniqueSorted([...(data?.companies || []), ...catalogCompanies]),
+    employees: uniqueSorted(data?.employees || []),
+    departments: uniqueSorted(data?.departments || []),
   };
 }
 
