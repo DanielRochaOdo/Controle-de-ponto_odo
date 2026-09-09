@@ -16,8 +16,8 @@ export const FLASH_SYNC_TARGETS = {
     buttonLabel: 'Sincronizar funcionários',
   },
   departments: {
-    label: 'Cargos / departamentos',
-    buttonLabel: 'Sincronizar cargos',
+    label: 'Departamentos',
+    buttonLabel: 'Sincronizar departamentos',
   },
   schedules: {
     label: 'Horários / escalas',
