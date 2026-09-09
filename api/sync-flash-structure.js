@@ -65,17 +65,48 @@ const sanitizeEmployee = (employee) => {
   return safe;
 };
 
-const firstDepartmentFromEmployee = (employee, departmentsById = new Map()) => {
-  const departments = Array.isArray(employee?.departments) ? employee.departments : [];
-  const first = departments[0] || null;
-  const id = String(pick(first, ['id', 'departmentId']) || pick(employee, ['departmentId']) || '');
-  const name = String(
-    pick(first, ['name'])
-    || pick(employee, ['department.name', 'department'])
-    || (id ? departmentsById.get(id) : '')
-    || '',
-  );
-  return { id: id || null, name: name || null };
+const normalizeDepartmentId = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (typeof value === 'object') {
+    const id = pick(value, ['id', 'departmentId']);
+    return id ? String(id) : null;
+  }
+  return null;
+};
+
+const departmentIdsFromEmployee = (employee, companyId) => {
+  const result = [];
+  const add = (value) => {
+    const id = normalizeDepartmentId(value);
+    if (id && !result.includes(id)) result.push(id);
+  };
+
+  const employments = Array.isArray(employee?.employments) ? employee.employments : [];
+  const employment = employments.find((item) => (
+    String(item?.companyId || '') === String(companyId)
+    && item?.isActive !== false
+  ));
+
+  const employmentDepartments = Array.isArray(employment?.departments) ? employment.departments : [];
+  employmentDepartments.forEach(add);
+
+  const topLevelDepartments = Array.isArray(employee?.departments) ? employee.departments : [];
+  topLevelDepartments.forEach(add);
+
+  const legacyId = pick(employee, ['departmentId']);
+  if (legacyId) add(legacyId);
+
+  return result;
+};
+
+const firstDepartmentFromEmployee = (employee, departmentsById, companyId) => {
+  const departmentIds = departmentIdsFromEmployee(employee, companyId);
+  const id = departmentIds[0] || null;
+  return {
+    id,
+    name: id ? departmentsById.get(id) || null : null,
+  };
 };
 
 const companyFields = (company) => ({
@@ -117,13 +148,20 @@ async function loadSyncedDepartmentsMap(supabase, userId, companyId) {
     .from('flash_departments')
     .select('flash_department_id,name')
     .eq('user_id', userId)
-    .eq('flash_company_id', companyId);
+    .eq('flash_company_id', companyId)
+    .order('name');
   if (error) throw error;
-  return new Map((data || []).map((department) => [String(department.flash_department_id), department.name]));
+
+  return new Map(
+    (data || [])
+      .filter((department) => department?.flash_department_id && department?.name)
+      .map((department) => [String(department.flash_department_id), String(department.name)]),
+  );
 }
 
 async function backfillEmployeeDepartments(supabase, userId, companyId, departmentsById) {
   let updated = 0;
+
   for (const [departmentId, departmentName] of departmentsById.entries()) {
     const { data, error } = await supabase
       .from('flash_employees')
@@ -135,6 +173,7 @@ async function backfillEmployeeDepartments(supabase, userId, companyId, departme
     if (error) throw error;
     updated += data?.length || 0;
   }
+
   return updated;
 }
 
@@ -183,17 +222,32 @@ async function loadScheduleAllocations(company, employees, startDate, endDate, o
 }
 
 async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
-  await updateRun(supabase, runId, { current_stage: 'Consultando funcionários na Flash' });
-  const [employees, departmentsById] = await Promise.all([
-    listEmployees(company.id),
-    loadSyncedDepartmentsMap(supabase, userId, company.id),
-  ]);
+  await updateRun(supabase, runId, { current_stage: 'Carregando departamentos sincronizados' });
+  const departmentsById = await loadSyncedDepartmentsMap(supabase, userId, company.id);
+
+  if (departmentsById.size === 0) {
+    const error = new Error(`Nenhum departamento sincronizado foi encontrado para ${company.name}. Sincronize "Departamentos" desta empresa antes de sincronizar os funcionários.`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  await updateRun(supabase, runId, { current_stage: `Consultando funcionários na Flash (${departmentsById.size} departamentos disponíveis)` });
+  const employees = await listEmployees(company.id);
   const common = companyFields(company);
+  const unmatchedDepartmentIds = new Set();
+  let employeesWithDepartmentId = 0;
+  let employeesWithDepartmentName = 0;
 
   const rows = employees
     .filter((employee) => employee?.id && employee?.name)
     .map((employee) => {
-      const department = firstDepartmentFromEmployee(employee, departmentsById);
+      const department = firstDepartmentFromEmployee(employee, departmentsById, company.id);
+      if (department.id) {
+        employeesWithDepartmentId += 1;
+        if (department.name) employeesWithDepartmentName += 1;
+        else unmatchedDepartmentIds.add(department.id);
+      }
+
       return {
         user_id: userId,
         ...common,
@@ -209,14 +263,39 @@ async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
     });
 
   await updateRun(supabase, runId, {
-    current_stage: 'Gravando funcionários no Supabase',
+    current_stage: `Gravando funcionários (${employeesWithDepartmentName}/${rows.length} com departamento identificado)`,
     current_company_employees_total: rows.length,
     current_company_employees_processed: rows.length,
   });
+
   await upsertChunks(supabase, 'flash_employees', rows, 'user_id,flash_company_id,flash_employee_id');
   await cleanupStaleRows(supabase, 'flash_employees', userId, company.id, syncedAt);
 
-  return { employeesProcessed: rows.length, departmentsProcessed: 0, allocationsProcessed: 0, warningCount: 0, warnings: [] };
+  await updateRun(supabase, runId, { current_stage: 'Confirmando vínculos de departamento' });
+  const backfilled = await backfillEmployeeDepartments(supabase, userId, company.id, departmentsById);
+
+  const warnings = [];
+  if (unmatchedDepartmentIds.size > 0) {
+    warnings.push({
+      message: `${unmatchedDepartmentIds.size} ID(s) de departamento retornado(s) nos funcionários não existem na lista de departamentos sincronizada.`,
+      departmentIds: [...unmatchedDepartmentIds].slice(0, 20),
+    });
+  }
+
+  return {
+    employeesProcessed: rows.length,
+    departmentsProcessed: 0,
+    allocationsProcessed: 0,
+    warningCount: warnings.length,
+    warnings,
+    departmentLinks: {
+      departmentsAvailable: departmentsById.size,
+      employeesWithDepartmentId,
+      employeesWithDepartmentName,
+      employeesBackfilled: backfilled,
+      unmatchedDepartmentIds: [...unmatchedDepartmentIds],
+    },
+  };
 }
 
 async function syncDepartments({ supabase, userId, company, runId, syncedAt }) {
@@ -238,15 +317,25 @@ async function syncDepartments({ supabase, userId, company, runId, syncedAt }) {
       synced_at: syncedAt,
     }));
 
-  await updateRun(supabase, runId, { current_stage: 'Gravando departamentos no Supabase' });
+  await updateRun(supabase, runId, { current_stage: `Gravando ${rows.length} departamentos no Supabase` });
   await upsertChunks(supabase, 'flash_departments', rows, 'user_id,flash_company_id,flash_department_id');
   await cleanupStaleRows(supabase, 'flash_departments', userId, company.id, syncedAt);
 
   const departmentsById = new Map(rows.map((department) => [department.flash_department_id, department.name]));
-  await updateRun(supabase, runId, { current_stage: 'Vinculando departamentos aos funcionários' });
-  await backfillEmployeeDepartments(supabase, userId, company.id, departmentsById);
+  await updateRun(supabase, runId, { current_stage: 'Atualizando funcionários que já possuem esses IDs de departamento' });
+  const employeesBackfilled = await backfillEmployeeDepartments(supabase, userId, company.id, departmentsById);
 
-  return { employeesProcessed: 0, departmentsProcessed: rows.length, allocationsProcessed: 0, warningCount: 0, warnings: [] };
+  return {
+    employeesProcessed: 0,
+    departmentsProcessed: rows.length,
+    allocationsProcessed: 0,
+    warningCount: 0,
+    warnings: [],
+    departmentLinks: {
+      departmentsAvailable: rows.length,
+      employeesBackfilled,
+    },
+  };
 }
 
 async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
@@ -401,6 +490,12 @@ export default async function handler(req, res) {
     if (target === 'schedules') result = await syncSchedules({ supabase, userId, company, runId, syncedAt });
 
     const finishedAt = new Date().toISOString();
+    const errorMessage = result.warningCount
+      ? target === 'schedules'
+        ? `${result.warningCount} funcionário(s) tiveram falha ao consultar horário.`
+        : `${result.warningCount} aviso(s) de vínculo cadastral.`
+      : null;
+
     const { error: finishError } = await supabase.from('flash_structure_sync_runs').update({
       status: 'completed',
       companies_processed: 1,
@@ -411,7 +506,7 @@ export default async function handler(req, res) {
       current_stage: 'Sincronização concluída',
       current_company_employees_processed: target === 'schedules' ? result.employeesProcessed : 0,
       progress_updated_at: finishedAt,
-      error_message: result.warningCount ? `${result.warningCount} funcionário(s) tiveram falha ao consultar horário.` : null,
+      error_message: errorMessage,
       finished_at: finishedAt,
     }).eq('id', runId);
     if (finishError) throw finishError;
@@ -427,6 +522,7 @@ export default async function handler(req, res) {
       allocationsProcessed: result.allocationsProcessed,
       warningCount: result.warningCount,
       warnings: result.warnings.slice(0, 20),
+      departmentLinks: result.departmentLinks || null,
       scheduleWindow: result.scheduleWindow || null,
       finishedAt,
     });
