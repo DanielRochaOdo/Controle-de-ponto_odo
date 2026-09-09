@@ -7,25 +7,56 @@ const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Fortaleza';
 const EVENTS_START_MONTH = '2026-01';
 
 // A API pública de Controle de Jornada expõe reasonId/reasonApiId, mas não documenta
-// um endpoint GET para o catálogo dos motivos. Estes valores são mantidos a partir do
-// cadastro vigente no portal Flash e do relatório oficial de Eventos exportado pelo portal.
-const EVENT_REASON_CATALOG = new Map([
-  [163319, { name: 'Alistamento Eleitoral', description: '' }],
-  [163317, { name: 'Atestado Médico', description: '' }],
-  [218926, { name: 'Atraso', description: '' }],
-  [213801, { name: 'Atraso justificado CCT', description: '' }],
-  [163334, { name: 'Banco de horas', description: '' }],
-  [163322, { name: 'Casamento', description: 'A licença gala ou licença casamento é um benefício garante 3 dias consecutivos de licença. Esses dias de folga são contados a partir do primeiro dia após a realização da cerimônia.' }],
-  [163331, { name: 'Comparecimento em Juízo', description: '' }],
-  [163326, { name: 'Consulta Médica - acompanhar esposa gestante', description: '' }],
-  [163323, { name: 'Consulta Médica - acompanhar filho de até 6 anos', description: '' }],
-  [163318, { name: 'Day-off', description: '' }],
+// um endpoint GET para o catálogo dos motivos. Como o reasonId varia entre empresas,
+// mantemos os IDs observados nos cadastros vigentes do portal Flash agrupados pelo nome.
+const EVENT_REASON_GROUPS = [
+  { name: 'Ajuste de horas BH', ids: [224020, 223548] },
+  { name: 'Alistamento Eleitoral', ids: [163319, 172636, 172617, 172674, 172655, 186339, 186358, 186377, 186396] },
+  { name: 'ASO', ids: [223665, 222370] },
+  { name: 'Atestado Médico', ids: [163317, 172634, 172615, 172672, 172653, 186337, 186356, 186375, 186394] },
+  { name: 'Atraso', ids: [218926, 213845, 214217, 214222, 214171, 213615] },
+  { name: 'Atraso justificado CCT', ids: [213801, 213846, 214218, 214223, 214170, 214215] },
+  { name: 'Banco de horas', ids: [163334] },
+  { name: 'Casamento', ids: [163322, 172639, 172620, 172677, 172658, 186342, 186361, 186380, 186399] },
+  { name: 'Comparecimento em Juízo', ids: [163331, 172648, 172629, 172686, 172667, 186351, 186370, 186389, 186408] },
+  { name: 'Consulta Médica - acompanhar esposa gestante', ids: [163326, 172643, 172624, 172681, 172662, 186346, 186365, 186384, 186403] },
+  { name: 'Consulta Médica - acompanhar filho de até 6 anos', ids: [163323, 172640, 172621, 172678, 172659, 186343, 186362, 186381, 186400] },
+  { name: 'Day-off', ids: [163318, 172635, 172616, 172673, 172654, 186338, 186357, 186376, 186395] },
+  { name: 'Declaração de acompanhamento', ids: [214220, 214214] },
+  { name: 'Declaração acompanhamento', ids: [214225] },
+  { name: 'Declaração de comparecimento', ids: [214219, 214213] },
+  { name: 'Declaração comparecimento', ids: [214224] },
+  { name: 'Declaração de Horas', ids: [163332, 172649, 172630, 172687, 172668, 186352, 186371, 186390, 186409] },
+  { name: 'Doação de Sangue', ids: [172637, 172618, 172675, 172656, 186340, 186359, 186378, 186397] },
+  { name: 'Exame Vestibular', ids: [172644, 172625, 172682, 172663, 186347, 186366, 186385, 186404] },
+  { name: 'Falecimento de Parente Próximo', ids: [172638, 172619, 172676, 172657, 186341, 186360, 186379, 186398] },
+  { name: 'Falta injustificada', ids: [163335, 172652, 172633, 172690, 172671, 186355, 186374, 186393, 186412] },
+  { name: 'Férias', ids: [172650, 172631, 172688, 172669, 186353, 186372, 186391, 186410] },
+  { name: 'Folga demissional', ids: [214128, 214227] },
+  { name: 'Folgas abonadas pelo gestor', ids: [163328, 172645, 172626, 172683, 172664, 186348, 186367, 186386, 186405] },
+  { name: 'Gestor decidiu abonar', ids: [172651, 172632, 172689, 172670, 186354, 186373, 186392, 186411] },
+  { name: 'Inclusão de horas bh', ids: [220914] },
+  { name: 'Intervalo Amamentação', ids: [214082] },
+  { name: 'Licença Maternidade', ids: [172641, 172622, 172679, 172660, 186344, 186363, 186382, 186401] },
+  { name: 'Licença Paternidade', ids: [172642, 172623, 172680, 172661, 186345, 186364, 186383, 186402] },
+  { name: 'Mesário - trabalho nas eleições', ids: [172646, 172627, 172684, 172665, 186349, 186368, 186387, 186406] },
+  { name: 'Saída antecipada', ids: [217830, 214221, 214226] },
+  { name: 'Serviço Militar', ids: [172647, 172628, 172685, 172666, 186350, 186369, 186388, 186407] },
+];
 
-  // Motivos já observados em eventos reais e validados pelo relatório exportado.
-  [163335, { name: 'Falta injustificada', description: 'As horas lançadas vão para Descontar Salário – Desconto Simples (1002)' }],
-  [163328, { name: 'Folgas abonadas pelo gestor', description: '' }],
-  [163332, { name: 'Declaração de Horas', description: '' }],
-]);
+const EVENT_REASON_CATALOG = new Map(
+  EVENT_REASON_GROUPS.flatMap(({ name, ids }) => ids.map((id) => [id, { name, description: '' }])),
+);
+
+// Descrições que já foram validadas diretamente no relatório oficial exportado da Flash.
+EVENT_REASON_CATALOG.set(163322, {
+  name: 'Casamento',
+  description: 'A licença gala ou licença casamento é um benefício garante 3 dias consecutivos de licença. Esses dias de folga são contados a partir do primeiro dia após a realização da cerimônia.',
+});
+EVENT_REASON_CATALOG.set(163335, {
+  name: 'Falta injustificada',
+  description: 'As horas lançadas vão para Descontar Salário – Desconto Simples (1002)',
+});
 
 const getServerClient = () => {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
