@@ -7,15 +7,23 @@ const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Fortaleza';
 const EVENTS_START_MONTH = '2026-01';
 
 // A API pública de Controle de Jornada expõe reasonId/reasonApiId, mas não documenta
-// um endpoint GET para o catálogo dos motivos. Estes valores foram validados cruzando
-// a resposta real de /events com o relatório oficial de Eventos exportado pelo portal Flash.
+// um endpoint GET para o catálogo dos motivos. Estes valores são mantidos a partir do
+// cadastro vigente no portal Flash e do relatório oficial de Eventos exportado pelo portal.
 const EVENT_REASON_CATALOG = new Map([
+  [163319, { name: 'Alistamento Eleitoral', description: '' }],
   [163317, { name: 'Atestado Médico', description: '' }],
-  [163335, { name: 'Falta injustificada', description: 'As horas lançadas vão para Descontar Salário – Desconto Simples (1002)' }],
-  [163328, { name: 'Folgas abonadas pelo gestor', description: '' }],
-  [163322, { name: 'Casamento', description: 'A licença gala ou licença casamento é um benefício garante 3 dias consecutivos de licença. Esses dias de folga são contados a partir do primeiro dia após a realização da cerimônia.' }],
   [218926, { name: 'Atraso', description: '' }],
   [213801, { name: 'Atraso justificado CCT', description: '' }],
+  [163334, { name: 'Banco de horas', description: '' }],
+  [163322, { name: 'Casamento', description: 'A licença gala ou licença casamento é um benefício garante 3 dias consecutivos de licença. Esses dias de folga são contados a partir do primeiro dia após a realização da cerimônia.' }],
+  [163331, { name: 'Comparecimento em Juízo', description: '' }],
+  [163326, { name: 'Consulta Médica - acompanhar esposa gestante', description: '' }],
+  [163323, { name: 'Consulta Médica - acompanhar filho de até 6 anos', description: '' }],
+  [163318, { name: 'Day-off', description: '' }],
+
+  // Motivos já observados em eventos reais e validados pelo relatório exportado.
+  [163335, { name: 'Falta injustificada', description: 'As horas lançadas vão para Descontar Salário – Desconto Simples (1002)' }],
+  [163328, { name: 'Folgas abonadas pelo gestor', description: '' }],
   [163332, { name: 'Declaração de Horas', description: '' }],
 ]);
 
