@@ -65,11 +65,16 @@ const sanitizeEmployee = (employee) => {
   return safe;
 };
 
-const firstDepartmentFromEmployee = (employee) => {
+const firstDepartmentFromEmployee = (employee, departmentsById = new Map()) => {
   const departments = Array.isArray(employee?.departments) ? employee.departments : [];
   const first = departments[0] || null;
   const id = String(pick(first, ['id', 'departmentId']) || pick(employee, ['departmentId']) || '');
-  const name = String(pick(first, ['name']) || pick(employee, ['department.name', 'department']) || '');
+  const name = String(
+    pick(first, ['name'])
+    || pick(employee, ['department.name', 'department'])
+    || (id ? departmentsById.get(id) : '')
+    || '',
+  );
   return { id: id || null, name: name || null };
 };
 
@@ -105,6 +110,32 @@ async function cleanupStaleRows(supabase, table, userId, companyId, syncedAt) {
     .eq('flash_company_id', companyId)
     .neq('synced_at', syncedAt);
   if (error) throw error;
+}
+
+async function loadSyncedDepartmentsMap(supabase, userId, companyId) {
+  const { data, error } = await supabase
+    .from('flash_departments')
+    .select('flash_department_id,name')
+    .eq('user_id', userId)
+    .eq('flash_company_id', companyId);
+  if (error) throw error;
+  return new Map((data || []).map((department) => [String(department.flash_department_id), department.name]));
+}
+
+async function backfillEmployeeDepartments(supabase, userId, companyId, departmentsById) {
+  let updated = 0;
+  for (const [departmentId, departmentName] of departmentsById.entries()) {
+    const { data, error } = await supabase
+      .from('flash_employees')
+      .update({ department_name: departmentName })
+      .eq('user_id', userId)
+      .eq('flash_company_id', companyId)
+      .eq('flash_department_id', departmentId)
+      .select('id');
+    if (error) throw error;
+    updated += data?.length || 0;
+  }
+  return updated;
 }
 
 async function loadScheduleAllocations(company, employees, startDate, endDate, onProgress) {
@@ -153,13 +184,16 @@ async function loadScheduleAllocations(company, employees, startDate, endDate, o
 
 async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
   await updateRun(supabase, runId, { current_stage: 'Consultando funcionários na Flash' });
-  const employees = await listEmployees(company.id);
+  const [employees, departmentsById] = await Promise.all([
+    listEmployees(company.id),
+    loadSyncedDepartmentsMap(supabase, userId, company.id),
+  ]);
   const common = companyFields(company);
 
   const rows = employees
     .filter((employee) => employee?.id && employee?.name)
     .map((employee) => {
-      const department = firstDepartmentFromEmployee(employee);
+      const department = firstDepartmentFromEmployee(employee, departmentsById);
       return {
         user_id: userId,
         ...common,
@@ -186,7 +220,7 @@ async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
 }
 
 async function syncDepartments({ supabase, userId, company, runId, syncedAt }) {
-  await updateRun(supabase, runId, { current_stage: 'Consultando cargos/departamentos na Flash' });
+  await updateRun(supabase, runId, { current_stage: 'Consultando departamentos na Flash' });
   const departments = await listDepartments(company.id);
   const common = companyFields(company);
 
@@ -204,9 +238,13 @@ async function syncDepartments({ supabase, userId, company, runId, syncedAt }) {
       synced_at: syncedAt,
     }));
 
-  await updateRun(supabase, runId, { current_stage: 'Gravando cargos/departamentos no Supabase' });
+  await updateRun(supabase, runId, { current_stage: 'Gravando departamentos no Supabase' });
   await upsertChunks(supabase, 'flash_departments', rows, 'user_id,flash_company_id,flash_department_id');
   await cleanupStaleRows(supabase, 'flash_departments', userId, company.id, syncedAt);
+
+  const departmentsById = new Map(rows.map((department) => [department.flash_department_id, department.name]));
+  await updateRun(supabase, runId, { current_stage: 'Vinculando departamentos aos funcionários' });
+  await backfillEmployeeDepartments(supabase, userId, company.id, departmentsById);
 
   return { employeesProcessed: 0, departmentsProcessed: rows.length, allocationsProcessed: 0, warningCount: 0, warnings: [] };
 }
