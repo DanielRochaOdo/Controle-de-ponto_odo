@@ -12,6 +12,9 @@ export const STATUS_LABELS = {
 };
 
 export const DEFAULT_SETTINGS = {
+  toleranceBefore: 5,
+  toleranceAfter: 5,
+  // Mantido para compatibilidade com eventuais consumidores antigos da configuração.
   tolerances: {
     [TimeRecordStatus.ON_TIME]: 5,
     [TimeRecordStatus.LATE]: 5,
@@ -22,17 +25,24 @@ export const DEFAULT_SETTINGS = {
   colors: { ...StatusColors, [TimeRecordStatus.ADJUSTED]: '#eab308' },
 };
 
-const mapSettings = (row) => ({
-  tolerances: {
-    [TimeRecordStatus.ON_TIME]: row?.on_time_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.ON_TIME],
-    [TimeRecordStatus.LATE]: row?.late_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.LATE],
-    [TimeRecordStatus.LATE_EXIT]: row?.late_exit_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.LATE_EXIT],
-    [TimeRecordStatus.EARLY]: row?.early_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.EARLY],
-    [TimeRecordStatus.ADJUSTED]: row?.adjusted_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.ADJUSTED],
-  },
-  colors: { ...DEFAULT_SETTINGS.colors, ...(row?.status_colors || {}) },
-  updatedAt: row?.updated_at || null,
-});
+const mapSettings = (row) => {
+  const toleranceBefore = row?.early_tolerance ?? DEFAULT_SETTINGS.toleranceBefore;
+  const toleranceAfter = row?.late_tolerance ?? DEFAULT_SETTINGS.toleranceAfter;
+
+  return {
+    toleranceBefore,
+    toleranceAfter,
+    tolerances: {
+      [TimeRecordStatus.ON_TIME]: toleranceAfter,
+      [TimeRecordStatus.LATE]: toleranceAfter,
+      [TimeRecordStatus.LATE_EXIT]: toleranceAfter,
+      [TimeRecordStatus.EARLY]: toleranceBefore,
+      [TimeRecordStatus.ADJUSTED]: row?.adjusted_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.ADJUSTED],
+    },
+    colors: { ...DEFAULT_SETTINGS.colors, ...(row?.status_colors || {}) },
+    updatedAt: row?.updated_at || null,
+  };
+};
 
 export async function loadAttendanceSettings(userId) {
   if (!userId) return DEFAULT_SETTINGS;
@@ -42,13 +52,16 @@ export async function loadAttendanceSettings(userId) {
 }
 
 export async function saveAttendanceSettings(userId, settings) {
+  const toleranceBefore = Math.max(0, Math.min(60, Number(settings.toleranceBefore) || 0));
+  const toleranceAfter = Math.max(0, Math.min(60, Number(settings.toleranceAfter) || 0));
   const payload = {
     user_id: userId,
-    on_time_tolerance: settings.tolerances[TimeRecordStatus.ON_TIME],
-    late_tolerance: settings.tolerances[TimeRecordStatus.LATE],
-    late_exit_tolerance: settings.tolerances[TimeRecordStatus.LATE_EXIT],
-    early_tolerance: settings.tolerances[TimeRecordStatus.EARLY],
-    adjusted_tolerance: settings.tolerances[TimeRecordStatus.ADJUSTED],
+    // As colunas antigas são espelhadas para manter compatibilidade sem alterar o schema.
+    on_time_tolerance: toleranceAfter,
+    late_tolerance: toleranceAfter,
+    late_exit_tolerance: toleranceAfter,
+    early_tolerance: toleranceBefore,
+    adjusted_tolerance: 0,
     status_colors: settings.colors,
     updated_at: new Date().toISOString(),
   };
