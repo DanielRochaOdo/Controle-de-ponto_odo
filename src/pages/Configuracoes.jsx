@@ -205,9 +205,18 @@ const Configuracoes = () => {
     return map;
   }, [syncRuns]);
 
-  const updateTolerance = (field, value) => {
+  const updateTolerance = (status, side, value) => {
     const number = Math.max(0, Math.min(60, Number(value) || 0));
-    setSettings((old) => ({ ...old, [field]: number }));
+    setSettings((old) => ({
+      ...old,
+      statusTolerances: {
+        ...old.statusTolerances,
+        [status]: {
+          ...(old.statusTolerances?.[status] || { before: 0, after: 0 }),
+          [side]: number,
+        },
+      },
+    }));
   };
 
   const updateColor = (status, value) => setSettings((old) => ({ ...old, colors: { ...old.colors, [status]: value } }));
@@ -289,29 +298,57 @@ const Configuracoes = () => {
 
             <div className="mt-4 grid gap-5 xl:grid-cols-2">
               <section className={PANEL}>
-                <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Tolerâncias de horário</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">Defina a janela considerada no horário antes e depois do horário previsto. A mesma regra vale para entrada e saída.</p>
-                <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                  <label className="rounded-xl border border-[#e2ecdc] bg-[#fbfdf9] p-4 dark:border-slate-800 dark:bg-slate-950/55">
-                    <span className="block text-sm font-semibold text-slate-700 dark:text-slate-300">Tolerância antes</span>
-                    <div className="mt-3 flex items-center gap-2">
-                      <input type="number" min="0" max="60" step="1" value={settings.toleranceBefore} onChange={(event) => updateTolerance('toleranceBefore', event.target.value)} className={`${FIELD} w-full`} />
-                      <span className="text-sm text-slate-500">min</span>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Ex.: com 1 min para 08:00, a janela começa às 07:59:00.</p>
-                  </label>
+                <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Tolerâncias por status</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">Cada status possui sua própria tolerância antes e depois do horário previsto.</p>
 
-                  <label className="rounded-xl border border-[#e2ecdc] bg-[#fbfdf9] p-4 dark:border-slate-800 dark:bg-slate-950/55">
-                    <span className="block text-sm font-semibold text-slate-700 dark:text-slate-300">Tolerância depois</span>
-                    <div className="mt-3 flex items-center gap-2">
-                      <input type="number" min="0" max="60" step="1" value={settings.toleranceAfter} onChange={(event) => updateTolerance('toleranceAfter', event.target.value)} className={`${FIELD} w-full`} />
-                      <span className="text-sm text-slate-500">min</span>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Ex.: com 1 min para 08:00, a janela termina às 08:01:59.</p>
-                  </label>
+                <div className="mt-6 overflow-hidden rounded-xl border border-[#e2ecdc] dark:border-slate-800">
+                  <div className="grid grid-cols-[minmax(0,1fr)_110px_110px] gap-3 bg-[#f5faf1] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[#5a7564] dark:bg-slate-950 dark:text-slate-400">
+                    <span>Status</span>
+                    <span>Antes</span>
+                    <span>Depois</span>
+                  </div>
+                  <div className="divide-y divide-[#e8f0e3] dark:divide-slate-800">
+                    {STATUSES.map((status) => (
+                      <div key={status} className="grid grid-cols-[minmax(0,1fr)_110px_110px] items-center gap-3 px-4 py-3">
+                        <div className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-slate-700 dark:text-slate-300">{STATUS_LABELS[status]}</span>
+                          {status === TimeRecordStatus.ADJUSTED && (
+                            <span className="mt-0.5 block text-[11px] text-slate-400">O ajuste sinalizado pela Flash tem prioridade.</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            aria-label={`${STATUS_LABELS[status]} antes`}
+                            type="number"
+                            min="0"
+                            max="60"
+                            step="1"
+                            value={settings.statusTolerances?.[status]?.before ?? 0}
+                            onChange={(event) => updateTolerance(status, 'before', event.target.value)}
+                            className={`${FIELD} w-full px-2 text-center`}
+                          />
+                          <span className="text-xs text-slate-400">min</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            aria-label={`${STATUS_LABELS[status]} depois`}
+                            type="number"
+                            min="0"
+                            max="60"
+                            step="1"
+                            value={settings.statusTolerances?.[status]?.after ?? 0}
+                            onChange={(event) => updateTolerance(status, 'after', event.target.value)}
+                            className={`${FIELD} w-full px-2 text-center`}
+                          />
+                          <span className="text-xs text-slate-400">min</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+
                 <div className="mt-4 rounded-xl bg-[#effbe8] px-4 py-3 text-xs leading-5 text-[#456454] dark:bg-emerald-950/40 dark:text-emerald-200">
-                  Os segundos são considerados na classificação: com 1 minuto depois, 08:01:59 permanece no horário e 08:02:00 já é atraso ou saída após horário.
+                  Os segundos fazem parte do limite. Ex.: para 08:00, uma tolerância de 1 minuto depois inclui até 08:01:59; 08:02:00 já fica fora dessa janela.
                 </div>
               </section>
 
