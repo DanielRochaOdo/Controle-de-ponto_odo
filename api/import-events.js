@@ -40,7 +40,7 @@ const EVENT_REASON_GROUPS = [
   { name: 'Licença Maternidade', ids: [172641, 172622, 172679, 172660, 186344, 186363, 186382, 186401] },
   { name: 'Licença Paternidade', ids: [172642, 172623, 172680, 172661, 186345, 186364, 186383, 186402] },
   { name: 'Mesário - trabalho nas eleições', ids: [172646, 172627, 172684, 172665, 186349, 186368, 186387, 186406] },
-  { name: 'Saída antecipada', ids: [217830, 214221, 214226] },
+  { name: 'Saída antecipada', ids: [217830, 214221, 214226, 226364] },
   { name: 'Serviço Militar', ids: [172647, 172628, 172685, 172666, 186350, 186369, 186388, 186407] },
 ];
 
