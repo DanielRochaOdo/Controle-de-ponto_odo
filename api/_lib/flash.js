@@ -106,18 +106,27 @@ export function parseTimetableName(value) {
 const normalizeClock = (value) => {
   if (value === null || value === undefined) return null;
   const raw = String(value).trim();
-  if (/^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/.test(raw)) {
-    const [hour, minute] = raw.split(':');
-    return `${hour.padStart(2, '0')}:${minute}`;
+  const directMatch = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.\d+)?)?$/);
+  if (directMatch) {
+    return `${directMatch[1].padStart(2, '0')}:${directMatch[2]}:${directMatch[3] || '00'}`;
   }
-  const nonIsoMatch = raw.match(/(?:^|\s)([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?(?:$|\s)/);
-  if (nonIsoMatch && !raw.includes('T')) return `${nonIsoMatch[1].padStart(2, '0')}:${nonIsoMatch[2]}`;
+  const nonIsoMatch = raw.match(/(?:^|\s)([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.\d+)?)?(?:$|\s)/);
+  if (nonIsoMatch && !raw.includes('T')) {
+    return `${nonIsoMatch[1].padStart(2, '0')}:${nonIsoMatch[2]}:${nonIsoMatch[3] || '00'}`;
+  }
   const parsed = new Date(raw);
   if (!Number.isNaN(parsed.getTime())) {
-    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: DEFAULT_TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(parsed);
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: DEFAULT_TIMEZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(parsed);
     const hour = parts.find((part) => part.type === 'hour')?.value;
     const minute = parts.find((part) => part.type === 'minute')?.value;
-    if (hour && minute) return `${hour}:${minute}`;
+    const second = parts.find((part) => part.type === 'second')?.value;
+    if (hour && minute && second) return `${hour}:${minute}:${second}`;
   }
   return null;
 };
@@ -174,10 +183,14 @@ function collectPunches(items) {
   return [...unique.values()].sort((a, b) => a.time.localeCompare(b.time));
 }
 
-const timeToMinutes = (time) => {
+const timeToSeconds = (time) => {
   if (!time) return null;
-  const [hour, minute] = time.split(':').map(Number);
-  return Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : null;
+  const [hour, minute, second = '0'] = String(time).split(':');
+  const h = Number(hour);
+  const m = Number(minute);
+  const s = Number(second);
+  if (![h, m, s].every(Number.isFinite)) return null;
+  return h * 3600 + m * 60 + s;
 };
 
 function collectScheduleTimes(value, depth = 0, result = []) {
@@ -203,7 +216,7 @@ function expectedTimesFromValue(value, allowRecursive = true) {
   const explicitEntry = normalizeClock(pick(value, ['scheduledEntry', 'scheduled_entry', 'expectedEntry', 'entryTime', 'startTime', 'workStart']));
   const explicitExit = normalizeClock(pick(value, ['scheduledExit', 'scheduled_exit', 'expectedExit', 'exitTime', 'endTime', 'workEnd']));
   if (explicitEntry || explicitExit || !allowRecursive) return { entry: explicitEntry, exit: explicitExit };
-  const times = [...new Set(collectScheduleTimes(value))].filter(Boolean).sort((a, b) => timeToMinutes(a) - timeToMinutes(b));
+  const times = [...new Set(collectScheduleTimes(value))].filter(Boolean).sort((a, b) => timeToSeconds(a) - timeToSeconds(b));
   return { entry: times[0] || null, exit: times[times.length - 1] || null };
 }
 
@@ -238,13 +251,19 @@ function findAllocation(allocations, employee, day) {
 function evaluateStatus(expected, actual, settings, { exit = false, adjusted = false } = {}) {
   if (!actual || !expected) return null;
   if (adjusted) return 'adjusted';
-  const diff = timeToMinutes(actual) - timeToMinutes(expected);
-  const onTime = Number(settings.on_time_tolerance ?? 5);
-  const early = Number(settings.early_tolerance ?? 5);
-  const late = Number(exit ? settings.late_exit_tolerance ?? 5 : settings.late_tolerance ?? 5);
-  if (Math.abs(diff) <= onTime) return 'on_time';
-  if (diff < -early) return 'early';
-  if (diff > late) return exit ? 'late_exit' : 'late';
+
+  const expectedSeconds = timeToSeconds(expected);
+  const actualSeconds = timeToSeconds(actual);
+  if (expectedSeconds === null || actualSeconds === null) return null;
+
+  const diffSeconds = actualSeconds - expectedSeconds;
+  const beforeMinutes = Math.max(0, Number(settings.early_tolerance ?? 5) || 0);
+  const afterMinutes = Math.max(0, Number(settings.late_tolerance ?? 5) || 0);
+  const beforeLimitSeconds = beforeMinutes * 60;
+  const afterLimitExclusiveSeconds = (afterMinutes + 1) * 60;
+
+  if (diffSeconds < -beforeLimitSeconds) return 'early';
+  if (diffSeconds >= afterLimitExclusiveSeconds) return exit ? 'late_exit' : 'late';
   return 'on_time';
 }
 

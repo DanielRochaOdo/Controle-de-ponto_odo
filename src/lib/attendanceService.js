@@ -11,28 +11,67 @@ export const STATUS_LABELS = {
   [TimeRecordStatus.ADJUSTED]: 'Ajustado',
 };
 
+const DEFAULT_STATUS_TOLERANCES = {
+  [TimeRecordStatus.ON_TIME]: { before: 5, after: 5 },
+  [TimeRecordStatus.LATE]: { before: 5, after: 5 },
+  [TimeRecordStatus.LATE_EXIT]: { before: 5, after: 5 },
+  [TimeRecordStatus.EARLY]: { before: 5, after: 5 },
+  [TimeRecordStatus.ADJUSTED]: { before: 0, after: 0 },
+};
+
+const clampTolerance = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Math.max(0, Math.min(60, Number.isFinite(parsed) ? parsed : fallback));
+};
+
+const pairFromLegacy = (value, fallback) => {
+  const normalized = clampTolerance(value, fallback);
+  return { before: normalized, after: normalized };
+};
+
+const normalizeStatusTolerances = (row) => {
+  const stored = row?.status_tolerances && typeof row.status_tolerances === 'object' ? row.status_tolerances : {};
+  const legacy = {
+    [TimeRecordStatus.ON_TIME]: row?.on_time_tolerance,
+    [TimeRecordStatus.LATE]: row?.late_tolerance,
+    [TimeRecordStatus.LATE_EXIT]: row?.late_exit_tolerance,
+    [TimeRecordStatus.EARLY]: row?.early_tolerance,
+    [TimeRecordStatus.ADJUSTED]: row?.adjusted_tolerance,
+  };
+
+  return Object.fromEntries(Object.values(TimeRecordStatus).map((status) => {
+    const defaults = DEFAULT_STATUS_TOLERANCES[status];
+    const fallback = pairFromLegacy(legacy[status], defaults.after);
+    const value = stored?.[status] || {};
+    return [status, {
+      before: clampTolerance(value.before, fallback.before),
+      after: clampTolerance(value.after, fallback.after),
+    }];
+  }));
+};
+
 export const DEFAULT_SETTINGS = {
-  tolerances: {
-    [TimeRecordStatus.ON_TIME]: 5,
-    [TimeRecordStatus.LATE]: 5,
-    [TimeRecordStatus.LATE_EXIT]: 5,
-    [TimeRecordStatus.EARLY]: 5,
-    [TimeRecordStatus.ADJUSTED]: 0,
-  },
+  statusTolerances: Object.fromEntries(
+    Object.entries(DEFAULT_STATUS_TOLERANCES).map(([status, value]) => [status, { ...value }]),
+  ),
+  // Mantido para compatibilidade com consumidores antigos que esperam um número por status.
+  tolerances: Object.fromEntries(
+    Object.entries(DEFAULT_STATUS_TOLERANCES).map(([status, value]) => [status, Math.max(value.before, value.after)]),
+  ),
   colors: { ...StatusColors, [TimeRecordStatus.ADJUSTED]: '#eab308' },
 };
 
-const mapSettings = (row) => ({
-  tolerances: {
-    [TimeRecordStatus.ON_TIME]: row?.on_time_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.ON_TIME],
-    [TimeRecordStatus.LATE]: row?.late_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.LATE],
-    [TimeRecordStatus.LATE_EXIT]: row?.late_exit_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.LATE_EXIT],
-    [TimeRecordStatus.EARLY]: row?.early_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.EARLY],
-    [TimeRecordStatus.ADJUSTED]: row?.adjusted_tolerance ?? DEFAULT_SETTINGS.tolerances[TimeRecordStatus.ADJUSTED],
-  },
-  colors: { ...DEFAULT_SETTINGS.colors, ...(row?.status_colors || {}) },
-  updatedAt: row?.updated_at || null,
-});
+const mapSettings = (row) => {
+  const statusTolerances = normalizeStatusTolerances(row);
+  return {
+    statusTolerances,
+    tolerances: Object.fromEntries(
+      Object.entries(statusTolerances).map(([status, value]) => [status, Math.max(value.before, value.after)]),
+    ),
+    colors: { ...DEFAULT_SETTINGS.colors, ...(row?.status_colors || {}) },
+    updatedAt: row?.updated_at || null,
+  };
+};
 
 export async function loadAttendanceSettings(userId) {
   if (!userId) return DEFAULT_SETTINGS;
@@ -42,13 +81,25 @@ export async function loadAttendanceSettings(userId) {
 }
 
 export async function saveAttendanceSettings(userId, settings) {
+  const statusTolerances = Object.fromEntries(Object.values(TimeRecordStatus).map((status) => {
+    const defaults = DEFAULT_STATUS_TOLERANCES[status];
+    const value = settings?.statusTolerances?.[status] || defaults;
+    return [status, {
+      before: clampTolerance(value.before, defaults.before),
+      after: clampTolerance(value.after, defaults.after),
+    }];
+  }));
+
+  const legacyValue = (status) => Math.max(statusTolerances[status].before, statusTolerances[status].after);
   const payload = {
     user_id: userId,
-    on_time_tolerance: settings.tolerances[TimeRecordStatus.ON_TIME],
-    late_tolerance: settings.tolerances[TimeRecordStatus.LATE],
-    late_exit_tolerance: settings.tolerances[TimeRecordStatus.LATE_EXIT],
-    early_tolerance: settings.tolerances[TimeRecordStatus.EARLY],
-    adjusted_tolerance: settings.tolerances[TimeRecordStatus.ADJUSTED],
+    status_tolerances: statusTolerances,
+    // As colunas antigas continuam espelhadas para compatibilidade com versões anteriores.
+    on_time_tolerance: legacyValue(TimeRecordStatus.ON_TIME),
+    late_tolerance: legacyValue(TimeRecordStatus.LATE),
+    late_exit_tolerance: legacyValue(TimeRecordStatus.LATE_EXIT),
+    early_tolerance: legacyValue(TimeRecordStatus.EARLY),
+    adjusted_tolerance: legacyValue(TimeRecordStatus.ADJUSTED),
     status_colors: settings.colors,
     updated_at: new Date().toISOString(),
   };
