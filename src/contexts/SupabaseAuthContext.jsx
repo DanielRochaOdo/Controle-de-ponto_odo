@@ -33,12 +33,11 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const handleSession = useCallback(async (nextSession) => {
+    const nextUser = nextSession?.user ?? null;
     setSession(nextSession);
-    setUser(nextSession?.user ?? null);
-    if (!nextSession?.user) {
-      setProfile(null);
-      setProfileLoading(false);
-    }
+    setUser(nextUser);
+    setProfileLoading(Boolean(nextUser));
+    if (!nextUser) setProfile(null);
     setLoading(false);
   }, []);
 
