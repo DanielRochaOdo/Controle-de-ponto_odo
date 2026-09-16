@@ -16,7 +16,7 @@ const UsersSettings = () => {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [showCreatePassword, setShowCreatePassword] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'manager' });
   const [resetUserId, setResetUserId] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showResetPassword, setShowResetPassword] = useState(false);
@@ -47,10 +47,13 @@ const UsersSettings = () => {
     setCreating(true);
     try {
       const created = await createSystemUser(form);
-      setForm({ name: '', email: '', password: '' });
+      setForm({ name: '', email: '', password: '', role: 'manager' });
       setShowCreatePassword(false);
       setUsers((current) => [...current, created].sort((a, b) => a.email.localeCompare(b.email, 'pt-BR')));
-      toast({ title: 'Usuário criado', description: `${created.email} foi criado como manager.` });
+      toast({
+        title: 'Usuário criado',
+        description: `${created.email} foi criado como ${created.role === 'admin' ? 'admin' : 'manager'}.`,
+      });
     } catch (error) {
       toast({ title: 'Não foi possível criar o usuário', description: error.message, variant: 'destructive' });
     } finally {
@@ -93,11 +96,11 @@ const UsersSettings = () => {
           </span>
           <div>
             <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Criar usuário</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Novos usuários são criados com perfil manager.</p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Escolha o nível de acesso do novo usuário. O padrão é Manager.</p>
           </div>
         </div>
 
-        <form onSubmit={handleCreate} className="mt-6 grid gap-4 lg:grid-cols-3">
+        <form onSubmit={handleCreate} className="mt-6 grid gap-4 lg:grid-cols-4">
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Nome de usuário <span className="font-normal text-slate-400">(opcional)</span></span>
             <input
@@ -145,7 +148,19 @@ const UsersSettings = () => {
             </span>
           </label>
 
-          <div className="lg:col-span-3 flex justify-end">
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Perfil</span>
+            <select
+              value={form.role}
+              onChange={(event) => setForm((current) => ({ ...current, role: event.target.value }))}
+              className={FIELD}
+            >
+              <option value="manager">Manager</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+
+          <div className="flex justify-end lg:col-span-4">
             <button
               type="submit"
               disabled={creating}
