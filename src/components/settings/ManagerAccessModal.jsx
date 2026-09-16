@@ -210,8 +210,8 @@ const ManagerAccessModal = ({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !saving && onOpenChange(nextOpen)}>
-      <DialogContent className="max-h-[88vh] max-w-3xl overflow-hidden border-[#dbe9d3] p-0 dark:border-slate-800">
-        <DialogHeader className="border-b border-[#e7efe2] px-6 py-5 pr-12 dark:border-slate-800">
+      <DialogContent className="!flex max-h-[calc(100dvh-2rem)] max-w-3xl flex-col overflow-hidden border-[#dbe9d3] p-0 dark:border-slate-800">
+        <DialogHeader className="shrink-0 border-b border-[#e7efe2] px-6 py-5 pr-12 dark:border-slate-800">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#eef9e7] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300">
               <Shield className="h-5 w-5" />
@@ -223,7 +223,7 @@ const ManagerAccessModal = ({
           </div>
         </DialogHeader>
 
-        <div className="space-y-3 border-b border-[#edf3e9] bg-[#fbfdf9] px-6 py-4 dark:border-slate-800 dark:bg-slate-950/50">
+        <div className="shrink-0 space-y-3 border-b border-[#edf3e9] bg-[#fbfdf9] px-6 py-4 dark:border-slate-800 dark:bg-slate-950/50">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
@@ -267,7 +267,7 @@ const ManagerAccessModal = ({
           </div>
         </div>
 
-        <div className="max-h-[54vh] space-y-3 overflow-y-auto px-6 py-5">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5">
           {filteredCatalog.map((company) => {
             const companyId = String(company.id);
             const isExpanded = normalizedSearch || expanded.has(companyId);
@@ -369,7 +369,7 @@ const ManagerAccessModal = ({
           )}
         </div>
 
-        <DialogFooter className="border-t border-[#e7efe2] bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
+        <DialogFooter className="shrink-0 border-t border-[#e7efe2] bg-white px-6 py-4 dark:border-slate-800 dark:bg-slate-900">
           <button type="button" disabled={saving} onClick={() => onOpenChange(false)} className="h-10 rounded-xl border border-[#d7e5cf] px-4 text-sm font-medium text-slate-600 disabled:opacity-60 dark:border-slate-700 dark:text-slate-300">
             Cancelar
           </button>
