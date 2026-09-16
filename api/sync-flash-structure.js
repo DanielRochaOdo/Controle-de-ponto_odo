@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import syncFlashStructureCore from './sync-flash-structure-core.js';
+import syncFlashStructureCore from './_lib/sync-flash-structure-core.js';
 
 const getServerClient = () => {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
