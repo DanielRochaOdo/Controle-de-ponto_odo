@@ -165,7 +165,7 @@ const StatusDistribution = ({ records, colors }) => {
 };
 
 const Dashboard = () => {
-  const { user, displayName } = useAuth();
+  const { user, displayName, isAdmin } = useAuth();
   const { toast } = useToast();
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [records, setRecords] = useState([]);
@@ -306,7 +306,9 @@ const Dashboard = () => {
             <div className="mt-5 space-y-3">
               <button onClick={handleImport} disabled={importing} className="flex w-full items-center gap-4 rounded-xl bg-[#57D100] px-4 py-4 text-left text-[#064E2C] transition hover:bg-[#4bc000] disabled:opacity-60"><RefreshCw className="h-5 w-5"/><span className="flex-1"><strong className="block text-sm">Atualizar dados da API</strong><span className="text-xs opacity-75">Importar registros do mês selecionado</span></span><ChevronRight className="h-5 w-5"/></button>
               <Link to="/registros" className="flex items-center gap-4 rounded-xl border border-[#dfe9d7] px-4 py-4 text-[#425c4e] transition hover:bg-[#f7fbf4] dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><FileText className="h-5 w-5"/><span className="flex-1"><strong className="block text-sm">Ver registros</strong><span className="text-xs text-slate-500">Consultar e filtrar registros de ponto</span></span><ChevronRight className="h-5 w-5"/></Link>
-              <Link to="/configuracoes" className="flex items-center gap-4 rounded-xl border border-[#dfe9d7] px-4 py-4 text-[#425c4e] transition hover:bg-[#f7fbf4] dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><Settings className="h-5 w-5"/><span className="flex-1"><strong className="block text-sm">Configurações</strong><span className="text-xs text-slate-500">Gerenciar tolerâncias e cores</span></span><ChevronRight className="h-5 w-5"/></Link>
+              {isAdmin && (
+                <Link to="/configuracoes" className="flex items-center gap-4 rounded-xl border border-[#dfe9d7] px-4 py-4 text-[#425c4e] transition hover:bg-[#f7fbf4] dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><Settings className="h-5 w-5"/><span className="flex-1"><strong className="block text-sm">Configurações</strong><span className="text-xs text-slate-500">Gerenciar tolerâncias e cores</span></span><ChevronRight className="h-5 w-5"/></Link>
+              )}
             </div>
           </section>
         </div>

@@ -4,12 +4,13 @@ import { CalendarDays, FileText, LayoutGrid, LogOut, Menu, Moon, Settings, Sun, 
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { ODONTOART_LOGO } from '@/lib/brand';
 import { applyTheme, getStoredTheme, saveTheme } from '@/lib/theme';
+import { UserRole } from '@/types';
 
 const items = [
   { icon: LayoutGrid, label: 'Dashboard', path: '/dashboard' },
   { icon: FileText, label: 'Registros', path: '/registros' },
-  { icon: CalendarDays, label: 'Eventos', path: '/eventos' },
-  { icon: Settings, label: 'Configurações', path: '/configuracoes' },
+  { icon: CalendarDays, label: 'Eventos', path: '/eventos', roles: [UserRole.ADMIN] },
+  { icon: Settings, label: 'Configurações', path: '/configuracoes', roles: [UserRole.ADMIN] },
 ];
 
 const Brand = () => (
@@ -24,7 +25,7 @@ const Brand = () => (
 
 const Sidebar = () => {
   const location = useLocation();
-  const { signOut, displayName } = useAuth();
+  const { signOut, displayName, role } = useAuth();
   const [open, setOpen] = useState(false);
   const [theme, setTheme] = useState(getStoredTheme);
 
@@ -36,6 +37,9 @@ const Sidebar = () => {
     saveTheme(next);
   };
 
+  const roleLabel = role === UserRole.ADMIN ? 'Administrador' : 'Gestor';
+  const visibleItems = items.filter((item) => !item.roles || item.roles.includes(role));
+
   const nav = (
     <div className="flex h-full flex-col border-r border-[#dfe9d7] bg-white text-[#173c2c] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100">
       <div className="flex min-h-28 items-center border-b border-[#e8f0e3] px-4 dark:border-slate-800">
@@ -43,7 +47,7 @@ const Sidebar = () => {
       </div>
 
       <nav className="flex-1 space-y-2 px-4 py-6">
-        {items.map(({ icon: Icon, label, path }) => {
+        {visibleItems.map(({ icon: Icon, label, path }) => {
           const active = location.pathname === path;
           return (
             <Link
@@ -65,7 +69,7 @@ const Sidebar = () => {
 
       <div className="border-t border-[#e8f0e3] p-4 dark:border-slate-800">
         <div className="mb-3 rounded-xl bg-[#f7fbf4] px-4 py-3 dark:bg-slate-900">
-          <p className="truncate text-xs font-medium uppercase tracking-[0.08em] text-[#829486] dark:text-slate-500">Usuário</p>
+          <p className="truncate text-xs font-medium uppercase tracking-[0.08em] text-[#829486] dark:text-slate-500">{roleLabel}</p>
           <p className="mt-1 truncate text-sm font-semibold text-[#173c2c] dark:text-slate-100" title={displayName}>{displayName}</p>
         </div>
 

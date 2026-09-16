@@ -623,6 +623,17 @@ export default async function handler(req, res) {
     if (authError || !authData?.user) return res.status(401).json({ stage, error: 'Sessão inválida ou expirada.' });
     const userId = authData.user.id;
 
+    stage = 'autorização do usuário';
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    if (profile?.role !== 'admin') {
+      return res.status(403).json({ stage, error: 'Acesso restrito a administradores.' });
+    }
+
     runId = crypto.randomUUID();
     const startedAt = new Date().toISOString();
     stage = 'criação do histórico de sincronização';

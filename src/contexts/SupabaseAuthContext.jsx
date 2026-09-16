@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 
 import { supabase, isSupabaseConfigured } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
+import { UserRole } from '@/types';
 
 const AuthContext = createContext(undefined);
 
@@ -16,6 +17,8 @@ export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(isSupabaseConfigured);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const currentUserIdRef = useRef(null);
 
   const clearAuthData = useCallback(() => {
     const keys = Object.keys(localStorage);
@@ -24,15 +27,33 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem(key);
       }
     });
+    currentUserIdRef.current = null;
     setSession(null);
     setUser(null);
     setProfile(null);
+    setProfileLoading(false);
   }, []);
 
-  const handleSession = useCallback(async (nextSession) => {
+  const handleSession = useCallback((nextSession) => {
+    const nextUser = nextSession?.user ?? null;
+    const nextUserId = nextUser?.id ?? null;
+    const userChanged = currentUserIdRef.current !== nextUserId;
+
+    currentUserIdRef.current = nextUserId;
     setSession(nextSession);
-    setUser(nextSession?.user ?? null);
-    if (!nextSession?.user) setProfile(null);
+    setUser(nextUser);
+
+    if (!nextUser) {
+      setProfile(null);
+      setProfileLoading(false);
+    } else if (userChanged) {
+      // O perfil precisa ser recarregado apenas quando o usuário realmente muda.
+      // Eventos como TOKEN_REFRESHED podem acontecer ao voltar para uma aba suspensa
+      // e não devem recolocar a aplicação em loading sem disparar um novo loadProfile.
+      setProfile(null);
+      setProfileLoading(true);
+    }
+
     setLoading(false);
   }, []);
 
@@ -66,7 +87,7 @@ export const AuthProvider = ({ children }) => {
     getSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, nextSession) => {
+      (event, nextSession) => {
         if (event === 'TOKEN_REFRESHED' && !nextSession) clearAuthData();
         handleSession(nextSession);
       }
@@ -78,28 +99,33 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     if (!user?.id || !isSupabaseConfigured) {
       setProfile(null);
-      return;
+      setProfileLoading(false);
+      return undefined;
     }
 
     let cancelled = false;
+    setProfileLoading(true);
 
     const loadProfile = async () => {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('display_name')
-        .eq('user_id', user.id)
-        .maybeSingle();
+      try {
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('display_name,role')
+          .eq('user_id', user.id)
+          .maybeSingle();
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      if (error) {
-        // A ausência da migration de perfil nunca deve impedir autenticação.
-        console.warn('User profile unavailable:', error.message);
-        setProfile(null);
-        return;
+        if (error) {
+          console.warn('User profile unavailable:', error.message);
+          setProfile(null);
+          return;
+        }
+
+        setProfile(data || null);
+      } finally {
+        if (!cancelled) setProfileLoading(false);
       }
-
-      setProfile(data || null);
     };
 
     loadProfile();
@@ -151,17 +177,23 @@ export const AuthProvider = ({ children }) => {
     || user?.email?.split('@')[0]
     || 'Usuário';
 
+  const role = profile?.role === UserRole.ADMIN ? UserRole.ADMIN : UserRole.MANAGER;
+  const isAdmin = role === UserRole.ADMIN;
+
   const value = useMemo(() => ({
     user,
     session,
     profile,
     displayName,
+    role,
+    isAdmin,
     loading,
+    profileLoading,
     isSupabaseConfigured,
     signUp,
     signIn,
     signOut,
-  }), [user, session, profile, displayName, loading, signUp, signIn, signOut]);
+  }), [user, session, profile, displayName, role, isAdmin, loading, profileLoading, signUp, signIn, signOut]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

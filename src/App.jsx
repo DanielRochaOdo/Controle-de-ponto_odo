@@ -8,6 +8,7 @@ import Dashboard from '@/pages/Dashboard';
 import Registros from '@/pages/Registros';
 import Eventos from '@/pages/Eventos';
 import Configuracoes from '@/pages/Configuracoes';
+import { UserRole } from '@/types';
 
 function App() {
   return (
@@ -18,8 +19,8 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/registros" element={<ProtectedRoute><Registros /></ProtectedRoute>} />
-            <Route path="/eventos" element={<ProtectedRoute><Eventos /></ProtectedRoute>} />
-            <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
+            <Route path="/eventos" element={<ProtectedRoute allowedRoles={[UserRole.ADMIN]}><Eventos /></ProtectedRoute>} />
+            <Route path="/configuracoes" element={<ProtectedRoute allowedRoles={[UserRole.ADMIN]}><Configuracoes /></ProtectedRoute>} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <Toaster />
