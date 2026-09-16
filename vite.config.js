@@ -1,6 +1,7 @@
 import path from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
+import adminUsersHandler from './api/admin-users.js';
 import importAttendanceHandler from './api/import-attendance.js';
 import importEventsHandler from './api/import-events.js';
 import syncFlashStructureHandler from './api/sync-flash-structure.js';
@@ -71,6 +72,7 @@ const localApiPlugin = () => ({
   name: 'local-flash-api',
   apply: 'serve',
   configureServer(server) {
+    registerLocalApi(server, '/api/admin-users', adminUsersHandler);
     registerLocalApi(server, '/api/import-attendance', importAttendanceHandler);
     registerLocalApi(server, '/api/import-events', importEventsHandler);
     registerLocalApi(server, '/api/sync-flash-structure', syncFlashStructureHandler);
