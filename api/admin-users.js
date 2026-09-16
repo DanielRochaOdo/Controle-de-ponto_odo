@@ -15,6 +15,11 @@ const getToken = (req) => {
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 const normalizeName = (value) => String(value || '').trim();
+const VALID_ROLES = new Set(['admin', 'manager']);
+const normalizeRole = (value) => {
+  const role = String(value || 'manager').trim().toLowerCase();
+  return VALID_ROLES.has(role) ? role : null;
+};
 
 async function requireAdmin(req, res, supabase) {
   const token = getToken(req);
@@ -91,9 +96,11 @@ async function handleCreate(req, supabase, res) {
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || '');
   const name = normalizeName(req.body?.name);
+  const role = normalizeRole(req.body?.role);
 
   if (!email) return res.status(400).json({ error: 'E-mail é obrigatório.' });
   if (!password) return res.status(400).json({ error: 'Senha é obrigatória.' });
+  if (!role) return res.status(400).json({ error: 'Perfil inválido. Use admin ou manager.' });
 
   const { data, error } = await supabase.auth.admin.createUser({
     email,
@@ -113,7 +120,7 @@ async function handleCreate(req, supabase, res) {
     .upsert({
       user_id: createdUser.id,
       display_name: displayName,
-      role: 'manager',
+      role,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id' });
 
@@ -127,7 +134,7 @@ async function handleCreate(req, supabase, res) {
       id: createdUser.id,
       name: name || displayName,
       email,
-      role: 'manager',
+      role,
       createdAt: createdUser.created_at || null,
       lastSignInAt: null,
     },
