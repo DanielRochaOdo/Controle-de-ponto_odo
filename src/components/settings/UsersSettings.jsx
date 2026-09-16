@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, EyeOff, KeyRound, Plus, RefreshCw, User } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Plus, RefreshCw, Shield, User } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import ManagerAccessModal, { summarizeManagerAccess } from '@/components/settings/ManagerAccessModal';
 import {
   createSystemUser,
-  listSystemUsers,
+  loadSystemUsersAdminData,
   resetSystemUserPassword,
+  saveSystemUserAccess,
 } from '@/lib/userAdminService';
 
 const FIELD = 'h-11 w-full rounded-xl border border-[#cfe8bc] bg-white px-3 outline-none transition focus:border-[#57D100] focus:ring-2 focus:ring-[#57D100]/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100';
@@ -13,19 +15,26 @@ const PANEL = 'rounded-2xl border border-[#dfe9d7] bg-white p-6 shadow-sm dark:b
 const UsersSettings = () => {
   const { toast } = useToast();
   const [users, setUsers] = useState([]);
+  const [accessCatalog, setAccessCatalog] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'manager' });
+  const [formAccess, setFormAccess] = useState([]);
   const [resetUserId, setResetUserId] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [accessModalOpen, setAccessModalOpen] = useState(false);
+  const [accessTarget, setAccessTarget] = useState(null);
+  const [accessSaving, setAccessSaving] = useState(false);
 
   const loadUsers = async () => {
     setLoading(true);
     try {
-      setUsers(await listSystemUsers());
+      const data = await loadSystemUsersAdminData();
+      setUsers(data.users);
+      setAccessCatalog(data.accessCatalog);
     } catch (error) {
       toast({ title: 'Erro ao carregar usuários', description: error.message, variant: 'destructive' });
     } finally {
@@ -46,8 +55,12 @@ const UsersSettings = () => {
 
     setCreating(true);
     try {
-      const created = await createSystemUser(form);
+      const created = await createSystemUser({
+        ...form,
+        access: form.role === 'manager' ? formAccess : [],
+      });
       setForm({ name: '', email: '', password: '', role: 'manager' });
+      setFormAccess([]);
       setShowCreatePassword(false);
       setUsers((current) => [...current, created].sort((a, b) => a.email.localeCompare(b.email, 'pt-BR')));
       toast({
@@ -86,6 +99,52 @@ const UsersSettings = () => {
       setResetting(false);
     }
   };
+
+  const openNewUserAccess = () => {
+    setAccessTarget({ type: 'new', access: formAccess });
+    setAccessModalOpen(true);
+  };
+
+  const openExistingUserAccess = (user) => {
+    setAccessTarget({ type: 'existing', user, access: user.access || [] });
+    setAccessModalOpen(true);
+  };
+
+  const handleSaveAccess = async (access) => {
+    if (accessTarget?.type === 'new') {
+      setFormAccess(access);
+      setAccessModalOpen(false);
+      return;
+    }
+
+    const user = accessTarget?.user;
+    if (!user?.id) return;
+
+    setAccessSaving(true);
+    try {
+      const savedAccess = await saveSystemUserAccess(user.id, access);
+      setUsers((current) => current.map((item) => (
+        item.id === user.id ? { ...item, access: savedAccess } : item
+      )));
+      setAccessModalOpen(false);
+      toast({
+        title: 'Acessos atualizados',
+        description: `O escopo de registros de ${user.email} foi atualizado.`,
+      });
+    } catch (error) {
+      toast({ title: 'Não foi possível salvar os acessos', description: error.message, variant: 'destructive' });
+    } finally {
+      setAccessSaving(false);
+    }
+  };
+
+  const modalValue = accessTarget?.type === 'new'
+    ? formAccess
+    : accessTarget?.user?.access || [];
+
+  const modalTitle = accessTarget?.type === 'new'
+    ? 'Acesso do novo manager'
+    : `Acesso de ${accessTarget?.user?.name || accessTarget?.user?.email || 'manager'}`;
 
   return (
     <div className="mt-5 space-y-5">
@@ -148,17 +207,40 @@ const UsersSettings = () => {
             </span>
           </label>
 
-          <label className="block">
+          <div className="block">
             <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Perfil</span>
-            <select
-              value={form.role}
-              onChange={(event) => setForm((current) => ({ ...current, role: event.target.value }))}
-              className={FIELD}
-            >
-              <option value="manager">Manager</option>
-              <option value="admin">Admin</option>
-            </select>
-          </label>
+            <div className="flex gap-2">
+              <select
+                value={form.role}
+                onChange={(event) => {
+                  const role = event.target.value;
+                  setForm((current) => ({ ...current, role }));
+                  if (role === 'admin') setFormAccess([]);
+                }}
+                className={`${FIELD} min-w-0 flex-1`}
+              >
+                <option value="manager">Manager</option>
+                <option value="admin">Admin</option>
+              </select>
+
+              {form.role === 'manager' && (
+                <button
+                  type="button"
+                  onClick={openNewUserAccess}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#cfe8bc] bg-white text-[#2f8f17] transition hover:bg-[#f4faef] dark:border-slate-700 dark:bg-slate-950 dark:text-emerald-300 dark:hover:bg-slate-800"
+                  title="Definir empresas e departamentos"
+                  aria-label="Definir empresas e departamentos do novo manager"
+                >
+                  <Shield className="h-5 w-5" />
+                </button>
+              )}
+            </div>
+            {form.role === 'manager' && (
+              <p className="mt-1.5 truncate text-xs text-slate-400" title={summarizeManagerAccess(formAccess, accessCatalog)}>
+                {summarizeManagerAccess(formAccess, accessCatalog)}
+              </p>
+            )}
+          </div>
 
           <div className="flex justify-end lg:col-span-4">
             <button
@@ -177,7 +259,7 @@ const UsersSettings = () => {
         <div className="flex flex-col gap-3 border-b border-[#e8f0e3] px-6 py-5 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Usuários cadastrados</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Consulte os acessos existentes e altere senhas diretamente.</p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Consulte os acessos existentes, restrinja managers e altere senhas diretamente.</p>
           </div>
           <button
             type="button"
@@ -191,12 +273,13 @@ const UsersSettings = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="w-full min-w-[820px] text-sm">
             <thead className="bg-[#f7fbf4] text-left text-xs uppercase tracking-wide text-[#63776b] dark:bg-slate-950 dark:text-slate-400">
               <tr>
                 <th className="px-6 py-3">Usuário</th>
                 <th className="px-6 py-3">E-mail</th>
                 <th className="px-6 py-3">Perfil</th>
+                <th className="px-6 py-3">Escopo</th>
                 <th className="px-6 py-3">Criado em</th>
                 <th className="px-6 py-3 text-right">Ações</th>
               </tr>
@@ -213,21 +296,37 @@ const UsersSettings = () => {
                     </td>
                     <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{item.email}</td>
                     <td className="px-6 py-4"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${item.role === 'admin' ? 'bg-[#eaf8df] text-[#065F2F] dark:bg-emerald-950 dark:text-emerald-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{item.role === 'admin' ? 'Admin' : 'Manager'}</span></td>
+                    <td className="px-6 py-4 text-xs text-slate-500 dark:text-slate-400">
+                      {item.role === 'admin' ? 'Acesso total' : summarizeManagerAccess(item.access || [], accessCatalog)}
+                    </td>
                     <td className="px-6 py-4 text-slate-500">{item.createdAt ? new Date(item.createdAt).toLocaleString('pt-BR') : '—'}</td>
                     <td className="px-6 py-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => startReset(item.id)}
-                        className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#d7e5cf] px-3 text-xs font-semibold text-[#425c4e] transition hover:bg-[#f5faf1] hover:text-[#065F2F] dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                      >
-                        <KeyRound className="h-4 w-4" />
-                        Alterar senha
-                      </button>
+                      <div className="inline-flex items-center gap-2">
+                        {item.role === 'manager' && (
+                          <button
+                            type="button"
+                            onClick={() => openExistingUserAccess(item)}
+                            className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#cfe8bc] text-[#2f8f17] transition hover:bg-[#f5faf1] dark:border-slate-700 dark:text-emerald-300 dark:hover:bg-slate-800"
+                            title="Empresas e departamentos permitidos"
+                            aria-label={`Definir empresas e departamentos de ${item.email}`}
+                          >
+                            <Shield className="h-4 w-4" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => startReset(item.id)}
+                          className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#d7e5cf] px-3 text-xs font-semibold text-[#425c4e] transition hover:bg-[#f5faf1] hover:text-[#065F2F] dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          <KeyRound className="h-4 w-4" />
+                          Alterar senha
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {resetUserId === item.id && (
                     <tr className="border-t border-[#edf3e9] bg-[#fbfdf9] dark:border-slate-800 dark:bg-slate-950/50">
-                      <td colSpan="5" className="px-6 py-4">
+                      <td colSpan="6" className="px-6 py-4">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
                           <label className="w-full sm:max-w-sm">
                             <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Nova senha para {item.email}</span>
@@ -264,15 +363,26 @@ const UsersSettings = () => {
                 </React.Fragment>
               ))}
               {!loading && users.length === 0 && (
-                <tr><td colSpan="5" className="px-6 py-12 text-center text-slate-400">Nenhum usuário cadastrado.</td></tr>
+                <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-400">Nenhum usuário cadastrado.</td></tr>
               )}
               {loading && (
-                <tr><td colSpan="5" className="px-6 py-12 text-center text-slate-400">Carregando usuários...</td></tr>
+                <tr><td colSpan="6" className="px-6 py-12 text-center text-slate-400">Carregando usuários...</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </section>
+
+      <ManagerAccessModal
+        open={accessModalOpen}
+        onOpenChange={setAccessModalOpen}
+        catalog={accessCatalog}
+        value={modalValue}
+        onSave={handleSaveAccess}
+        saving={accessSaving}
+        title={modalTitle}
+        description="O manager poderá atualizar a base normalmente, mas verá somente os registros liberados aqui."
+      />
     </div>
   );
 };
