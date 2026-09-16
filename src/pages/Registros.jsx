@@ -102,7 +102,9 @@ const ApiBanner = () => (
 const Registros = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const initialRange = monthRange(format(new Date(), 'yyyy-MM'));
+  const currentMonth = format(new Date(), 'yyyy-MM');
+  const initialRange = monthRange(currentMonth);
+  const [syncMonth, setSyncMonth] = useState(currentMonth);
   const [filters, setFilters] = useState({ ...initialRange, search: '', company: 'all', employee: 'all', department: 'all', status: 'all' });
   const [appliedFilters, setAppliedFilters] = useState(filters);
   const [records, setRecords] = useState([]);
@@ -198,13 +200,8 @@ const Registros = () => {
   const handleImport = async () => {
     setImporting(true);
     try {
-      const start = new Date(`${filters.startDate}T12:00:00`);
-      const end = new Date(`${filters.endDate}T12:00:00`);
-      const days = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
-      if (!Number.isFinite(days) || days < 1) throw new Error('Selecione um período válido antes de atualizar os dados.');
-      if (days > 62) throw new Error('A atualização da API permite no máximo 62 dias por vez. Ajuste o período e tente novamente.');
-
-      const result = await importAttendanceFromFlash(filters.startDate, filters.endDate);
+      const range = monthRange(syncMonth);
+      const result = await importAttendanceFromFlash(range.startDate, range.endDate);
       toast({ title: 'Dados atualizados', description: `${result.recordsProcessed || 0} registros processados em ${result.companiesProcessed || 0} empresas.` });
       if (user) setOptions(await fetchFilterOptions(user.id));
       await loadRecords();
@@ -288,8 +285,16 @@ const Registros = () => {
             <p className="mt-1 text-sm text-[#73877b] dark:text-slate-400">Consulte e gerencie os registros de ponto importados via API</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <PeriodFilter compact startDate={filters.startDate} endDate={filters.endDate} onApply={applyPeriod} />
-            <button onClick={handleImport} disabled={importing} className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#57D100] px-5 text-sm font-semibold text-[#064E2C] shadow-sm transition hover:bg-[#4bc000] disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${importing ? 'animate-spin' : ''}`}/>{importing ? 'Atualizando...' : 'Atualizar dados da API'}</button>
+            <input
+              type="month"
+              value={syncMonth}
+              max={currentMonth}
+              onChange={(event) => setSyncMonth(event.target.value)}
+              className={FIELD}
+              style={{ width: 190 }}
+              aria-label="Mês da atualização da API"
+            />
+            <button onClick={handleImport} disabled={importing || !syncMonth} className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#57D100] px-5 text-sm font-semibold text-[#064E2C] shadow-sm transition hover:bg-[#4bc000] disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${importing ? 'animate-spin' : ''}`}/>{importing ? 'Atualizando...' : 'Atualizar dados da API'}</button>
             <button onClick={handleExport} disabled={exporting || count === 0} className="inline-flex h-11 items-center gap-2 rounded-xl border border-[#cfe0c5] bg-white px-5 text-sm font-semibold text-[#365b42] transition hover:bg-[#f7fbf4] disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"><Download className="h-4 w-4"/>{exporting ? 'Exportando...' : 'Exportar Excel'}</button>
           </div>
         </div>
@@ -297,7 +302,8 @@ const Registros = () => {
         <ApiBanner />
 
         <section className={`${CARD} mt-4 p-4`}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-[1.15fr_1fr_1fr_1fr_1fr_auto]">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[1.15fr_1.1fr_1fr_1fr_1fr_1fr_auto]">
+            <PeriodFilter startDate={filters.startDate} endDate={filters.endDate} onApply={applyPeriod} />
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Search className="h-4 w-4"/>Buscar</span><input value={filters.search} onChange={(event) => setFilters((old) => ({ ...old, search: event.target.value }))} placeholder="Digite o nome do colaborador..." className={FIELD}/></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Building className="h-4 w-4"/>Empresa</span><select value={filters.company} onChange={(event) => setFilters((old) => ({ ...old, company: event.target.value }))} className={FIELD}><option value="all">Todas as empresas</option>{options.companies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Users className="h-4 w-4"/>Colaborador</span><select value={filters.employee} onChange={(event) => setFilters((old) => ({ ...old, employee: event.target.value }))} className={FIELD}><option value="all">Todos os colaboradores</option>{options.employees.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
