@@ -18,16 +18,33 @@ async function authenticatedRequest(method, body) {
   return payload;
 }
 
-export async function listSystemUsers() {
+export async function loadSystemUsersAdminData() {
   const payload = await authenticatedRequest('GET');
-  return payload.users || [];
+  return {
+    users: payload.users || [],
+    accessCatalog: payload.accessCatalog || [],
+  };
 }
 
-export async function createSystemUser({ name, email, password, role = 'manager' }) {
-  const payload = await authenticatedRequest('POST', { name, email, password, role });
+export async function listSystemUsers() {
+  const payload = await loadSystemUsersAdminData();
+  return payload.users;
+}
+
+export async function createSystemUser({ name, email, password, role = 'manager', access = [] }) {
+  const payload = await authenticatedRequest('POST', { name, email, password, role, access });
   return payload.user;
 }
 
 export async function resetSystemUserPassword(userId, password) {
   return authenticatedRequest('PATCH', { userId, password });
+}
+
+export async function saveSystemUserAccess(userId, access) {
+  const payload = await authenticatedRequest('PATCH', {
+    action: 'access',
+    userId,
+    access,
+  });
+  return payload.access || [];
 }
