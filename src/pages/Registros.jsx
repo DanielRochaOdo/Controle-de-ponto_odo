@@ -288,6 +288,7 @@ const Registros = () => {
             <p className="mt-1 text-sm text-[#73877b] dark:text-slate-400">Consulte e gerencie os registros de ponto importados via API</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <PeriodFilter compact startDate={filters.startDate} endDate={filters.endDate} onApply={applyPeriod} />
             <button onClick={handleImport} disabled={importing} className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#57D100] px-5 text-sm font-semibold text-[#064E2C] shadow-sm transition hover:bg-[#4bc000] disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${importing ? 'animate-spin' : ''}`}/>{importing ? 'Atualizando...' : 'Atualizar dados da API'}</button>
             <button onClick={handleExport} disabled={exporting || count === 0} className="inline-flex h-11 items-center gap-2 rounded-xl border border-[#cfe0c5] bg-white px-5 text-sm font-semibold text-[#365b42] transition hover:bg-[#f7fbf4] disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"><Download className="h-4 w-4"/>{exporting ? 'Exportando...' : 'Exportar Excel'}</button>
           </div>
@@ -296,8 +297,7 @@ const Registros = () => {
         <ApiBanner />
 
         <section className={`${CARD} mt-4 p-4`}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[1.15fr_1fr_1fr_1fr_1fr_1fr_auto]">
-            <PeriodFilter startDate={filters.startDate} endDate={filters.endDate} onApply={applyPeriod} />
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-[1.15fr_1fr_1fr_1fr_1fr_auto]">
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Search className="h-4 w-4"/>Buscar</span><input value={filters.search} onChange={(event) => setFilters((old) => ({ ...old, search: event.target.value }))} placeholder="Digite o nome do colaborador..." className={FIELD}/></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Building className="h-4 w-4"/>Empresa</span><select value={filters.company} onChange={(event) => setFilters((old) => ({ ...old, company: event.target.value }))} className={FIELD}><option value="all">Todas as empresas</option>{options.companies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Users className="h-4 w-4"/>Colaborador</span><select value={filters.employee} onChange={(event) => setFilters((old) => ({ ...old, employee: event.target.value }))} className={FIELD}><option value="all">Todos os colaboradores</option>{options.employees.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
