@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 
 import { supabase, isSupabaseConfigured } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
@@ -18,6 +18,7 @@ export const AuthProvider = ({ children }) => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(isSupabaseConfigured);
   const [profileLoading, setProfileLoading] = useState(false);
+  const currentUserIdRef = useRef(null);
 
   const clearAuthData = useCallback(() => {
     const keys = Object.keys(localStorage);
@@ -26,18 +27,33 @@ export const AuthProvider = ({ children }) => {
         localStorage.removeItem(key);
       }
     });
+    currentUserIdRef.current = null;
     setSession(null);
     setUser(null);
     setProfile(null);
     setProfileLoading(false);
   }, []);
 
-  const handleSession = useCallback(async (nextSession) => {
+  const handleSession = useCallback((nextSession) => {
     const nextUser = nextSession?.user ?? null;
+    const nextUserId = nextUser?.id ?? null;
+    const userChanged = currentUserIdRef.current !== nextUserId;
+
+    currentUserIdRef.current = nextUserId;
     setSession(nextSession);
     setUser(nextUser);
-    setProfileLoading(Boolean(nextUser));
-    if (!nextUser) setProfile(null);
+
+    if (!nextUser) {
+      setProfile(null);
+      setProfileLoading(false);
+    } else if (userChanged) {
+      // O perfil precisa ser recarregado apenas quando o usuário realmente muda.
+      // Eventos como TOKEN_REFRESHED podem acontecer ao voltar para uma aba suspensa
+      // e não devem recolocar a aplicação em loading sem disparar um novo loadProfile.
+      setProfile(null);
+      setProfileLoading(true);
+    }
+
     setLoading(false);
   }, []);
 
@@ -71,7 +87,7 @@ export const AuthProvider = ({ children }) => {
     getSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, nextSession) => {
+      (event, nextSession) => {
         if (event === 'TOKEN_REFRESHED' && !nextSession) clearAuthData();
         handleSession(nextSession);
       }
