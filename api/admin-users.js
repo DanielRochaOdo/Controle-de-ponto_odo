@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { getConfiguredFlashCompanies } from './_lib/flashCompanies.js';
 
 const getServerClient = () => {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -66,14 +67,130 @@ async function listAllAuthUsers(supabase) {
   return users;
 }
 
+async function loadAccessCatalog(supabase) {
+  const companies = getConfiguredFlashCompanies();
+  if (!companies.length) return [];
+
+  const companyIds = companies.map((company) => company.id);
+  const { data, error } = await supabase
+    .from('flash_departments')
+    .select('flash_company_id,flash_department_id,name,is_active,synced_at')
+    .in('flash_company_id', companyIds)
+    .order('name');
+  if (error) throw error;
+
+  const departmentsByCompany = new Map();
+  (data || []).forEach((row) => {
+    if (!row?.flash_company_id || !row?.flash_department_id || !row?.name || row.is_active === false) return;
+    const companyId = String(row.flash_company_id);
+    const departmentId = String(row.flash_department_id);
+    if (!departmentsByCompany.has(companyId)) departmentsByCompany.set(companyId, new Map());
+    departmentsByCompany.get(companyId).set(departmentId, {
+      id: departmentId,
+      name: String(row.name),
+    });
+  });
+
+  return companies.map((company) => ({
+    id: String(company.id),
+    key: company.key,
+    name: company.name,
+    departments: [...(departmentsByCompany.get(String(company.id))?.values() || [])]
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+  }));
+}
+
+function normalizeAccessEntries(access, catalog) {
+  if (!Array.isArray(access)) return [];
+  const companies = new Map(catalog.map((company) => [String(company.id), company]));
+  const grouped = new Map();
+
+  access.forEach((entry) => {
+    const companyId = String(entry?.companyId || '').trim();
+    const departmentKey = String(entry?.departmentKey || '').trim();
+    if (!companyId || !departmentKey) return;
+
+    const company = companies.get(companyId);
+    if (!company) throw new Error('Uma das empresas selecionadas não está disponível na Estrutura Flash.');
+
+    if (departmentKey !== '*' && !company.departments.some((department) => department.id === departmentKey)) {
+      throw new Error(`Um dos departamentos selecionados de ${company.name} não está disponível na Estrutura Flash.`);
+    }
+
+    if (!grouped.has(companyId)) grouped.set(companyId, new Set());
+    grouped.get(companyId).add(departmentKey);
+  });
+
+  const normalized = [];
+  grouped.forEach((keys, companyId) => {
+    if (keys.has('*')) {
+      normalized.push({ companyId, departmentKey: '*' });
+      return;
+    }
+    keys.forEach((departmentKey) => normalized.push({ companyId, departmentKey }));
+  });
+  return normalized;
+}
+
+async function replaceManagerAccess(supabase, userId, access, catalog) {
+  const { data: profile, error: profileError } = await supabase
+    .from('user_profiles')
+    .select('role')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (profileError) throw profileError;
+  if (!profile) {
+    const error = new Error('Usuário não encontrado.');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (profile.role !== 'manager') {
+    const error = new Error('O escopo de empresas e departamentos é aplicado somente a managers.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalized = normalizeAccessEntries(access, catalog);
+  const { error: deleteError } = await supabase
+    .from('manager_attendance_permissions')
+    .delete()
+    .eq('user_id', userId);
+  if (deleteError) throw deleteError;
+
+  if (normalized.length) {
+    const { error: insertError } = await supabase
+      .from('manager_attendance_permissions')
+      .insert(normalized.map((entry) => ({
+        user_id: userId,
+        flash_company_id: entry.companyId,
+        department_key: entry.departmentKey,
+      })));
+    if (insertError) throw insertError;
+  }
+
+  return normalized;
+}
+
 async function handleList(supabase, res) {
-  const [authUsers, profilesResult] = await Promise.all([
+  const [authUsers, profilesResult, permissionsResult, accessCatalog] = await Promise.all([
     listAllAuthUsers(supabase),
     supabase.from('user_profiles').select('user_id,display_name,role'),
+    supabase.from('manager_attendance_permissions').select('user_id,flash_company_id,department_key'),
+    loadAccessCatalog(supabase),
   ]);
 
   if (profilesResult.error) throw profilesResult.error;
+  if (permissionsResult.error) throw permissionsResult.error;
+
   const profiles = new Map((profilesResult.data || []).map((profile) => [profile.user_id, profile]));
+  const accessByUser = new Map();
+  (permissionsResult.data || []).forEach((permission) => {
+    if (!accessByUser.has(permission.user_id)) accessByUser.set(permission.user_id, []);
+    accessByUser.get(permission.user_id).push({
+      companyId: String(permission.flash_company_id),
+      departmentKey: String(permission.department_key),
+    });
+  });
 
   const users = authUsers
     .map((user) => {
@@ -83,13 +200,14 @@ async function handleList(supabase, res) {
         name: user.user_metadata?.name || profile?.display_name || '',
         email: user.email || '',
         role: profile?.role || 'manager',
+        access: accessByUser.get(user.id) || [],
         createdAt: user.created_at || null,
         lastSignInAt: user.last_sign_in_at || null,
       };
     })
     .sort((a, b) => a.email.localeCompare(b.email, 'pt-BR'));
 
-  return res.status(200).json({ users });
+  return res.status(200).json({ users, accessCatalog });
 }
 
 async function handleCreate(req, supabase, res) {
@@ -101,6 +219,11 @@ async function handleCreate(req, supabase, res) {
   if (!email) return res.status(400).json({ error: 'E-mail é obrigatório.' });
   if (!password) return res.status(400).json({ error: 'Senha é obrigatória.' });
   if (!role) return res.status(400).json({ error: 'Perfil inválido. Use admin ou manager.' });
+
+  const accessCatalog = role === 'manager' ? await loadAccessCatalog(supabase) : [];
+  const normalizedAccess = role === 'manager'
+    ? normalizeAccessEntries(req.body?.access || [], accessCatalog)
+    : [];
 
   const { data, error } = await supabase.auth.admin.createUser({
     email,
@@ -114,31 +237,37 @@ async function handleCreate(req, supabase, res) {
   const createdUser = data?.user;
   if (!createdUser?.id) return res.status(500).json({ error: 'Usuário criado sem identificador.' });
 
-  const displayName = name || email.split('@')[0] || 'Usuário';
-  const { error: profileError } = await supabase
-    .from('user_profiles')
-    .upsert({
-      user_id: createdUser.id,
-      display_name: displayName,
-      role,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' });
+  try {
+    const displayName = name || email.split('@')[0] || 'Usuário';
+    const { error: profileError } = await supabase
+      .from('user_profiles')
+      .upsert({
+        user_id: createdUser.id,
+        display_name: displayName,
+        role,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+    if (profileError) throw profileError;
 
-  if (profileError) {
+    if (role === 'manager') {
+      await replaceManagerAccess(supabase, createdUser.id, normalizedAccess, accessCatalog);
+    }
+
+    return res.status(201).json({
+      user: {
+        id: createdUser.id,
+        name: name || displayName,
+        email,
+        role,
+        access: normalizedAccess,
+        createdAt: createdUser.created_at || null,
+        lastSignInAt: null,
+      },
+    });
+  } catch (createError) {
     await supabase.auth.admin.deleteUser(createdUser.id).catch(() => null);
-    throw profileError;
+    throw createError;
   }
-
-  return res.status(201).json({
-    user: {
-      id: createdUser.id,
-      name: name || displayName,
-      email,
-      role,
-      createdAt: createdUser.created_at || null,
-      lastSignInAt: null,
-    },
-  });
 }
 
 async function handlePasswordReset(req, supabase, res) {
@@ -155,6 +284,15 @@ async function handlePasswordReset(req, supabase, res) {
   return res.status(200).json({ success: true });
 }
 
+async function handleAccessUpdate(req, supabase, res) {
+  const userId = String(req.body?.userId || '').trim();
+  if (!userId) return res.status(400).json({ error: 'Usuário é obrigatório.' });
+
+  const accessCatalog = await loadAccessCatalog(supabase);
+  const access = await replaceManagerAccess(supabase, userId, req.body?.access || [], accessCatalog);
+  return res.status(200).json({ success: true, access });
+}
+
 export default async function handler(req, res) {
   if (!['GET', 'POST', 'PATCH'].includes(req.method)) {
     return res.status(405).json({ error: 'Método não permitido.' });
@@ -167,9 +305,10 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') return handleList(supabase, res);
     if (req.method === 'POST') return handleCreate(req, supabase, res);
+    if (req.body?.action === 'access') return handleAccessUpdate(req, supabase, res);
     return handlePasswordReset(req, supabase, res);
   } catch (error) {
     console.error('Falha na administração de usuários:', error);
-    return res.status(500).json({ error: error?.message || 'Falha ao administrar usuários.' });
+    return res.status(error?.statusCode || 500).json({ error: error?.message || 'Falha ao administrar usuários.' });
   }
 }

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { endOfMonth, format, startOfMonth } from 'date-fns';
 import Layout from '@/components/layout/Layout';
+import PeriodFilter from '@/components/filters/PeriodFilter';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import {
@@ -101,8 +102,9 @@ const ApiBanner = () => (
 const Registros = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
-  const initialRange = monthRange(month);
+  const currentMonth = format(new Date(), 'yyyy-MM');
+  const initialRange = monthRange(currentMonth);
+  const [syncMonth, setSyncMonth] = useState(currentMonth);
   const [filters, setFilters] = useState({ ...initialRange, search: '', company: 'all', employee: 'all', department: 'all', status: 'all' });
   const [appliedFilters, setAppliedFilters] = useState(filters);
   const [records, setRecords] = useState([]);
@@ -116,11 +118,6 @@ const Registros = () => {
   const [exporting, setExporting] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
-
-  useEffect(() => {
-    const range = monthRange(month);
-    setFilters((old) => ({ ...old, ...range }));
-  }, [month]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -171,14 +168,14 @@ const Registros = () => {
   }, [summaryRecords]);
 
   const activeChips = useMemo(() => {
-    const chips = [{ key: 'period', label: `Período: ${month.split('-').reverse().join('/')}` }];
+    const chips = [{ key: 'period', label: `Período: ${formatDate(appliedFilters.startDate)} até ${formatDate(appliedFilters.endDate)}` }];
     if (appliedFilters.search) chips.push({ key: 'search', label: `Busca: ${appliedFilters.search}` });
     if (appliedFilters.company !== 'all') chips.push({ key: 'company', label: `Empresa: ${appliedFilters.company}` });
     if (appliedFilters.employee !== 'all') chips.push({ key: 'employee', label: `Colaborador: ${appliedFilters.employee}` });
     if (appliedFilters.department !== 'all') chips.push({ key: 'department', label: `Departamento: ${appliedFilters.department}` });
     if (appliedFilters.status !== 'all') chips.push({ key: 'status', label: `Status: ${STATUS_LABELS[appliedFilters.status]}` });
     return chips;
-  }, [appliedFilters, month]);
+  }, [appliedFilters]);
 
   const clearOne = (key) => {
     if (key === 'period') return;
@@ -186,14 +183,24 @@ const Registros = () => {
   };
 
   const clearFilters = () => {
-    const range = monthRange(month);
-    setFilters({ ...range, search: '', company: 'all', employee: 'all', department: 'all', status: 'all' });
+    setFilters((old) => ({
+      ...old,
+      search: '',
+      company: 'all',
+      employee: 'all',
+      department: 'all',
+      status: 'all',
+    }));
+  };
+
+  const applyPeriod = ({ startDate, endDate }) => {
+    setFilters((old) => ({ ...old, startDate, endDate }));
   };
 
   const handleImport = async () => {
     setImporting(true);
     try {
-      const range = monthRange(month);
+      const range = monthRange(syncMonth);
       const result = await importAttendanceFromFlash(range.startDate, range.endDate);
       toast({ title: 'Dados atualizados', description: `${result.recordsProcessed || 0} registros processados em ${result.companiesProcessed || 0} empresas.` });
       if (user) setOptions(await fetchFilterOptions(user.id));
@@ -278,8 +285,16 @@ const Registros = () => {
             <p className="mt-1 text-sm text-[#73877b] dark:text-slate-400">Consulte e gerencie os registros de ponto importados via API</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className={FIELD} style={{ width: 160 }} />
-            <button onClick={handleImport} disabled={importing} className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#57D100] px-5 text-sm font-semibold text-[#064E2C] shadow-sm transition hover:bg-[#4bc000] disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${importing ? 'animate-spin' : ''}`}/>{importing ? 'Atualizando...' : 'Atualizar dados da API'}</button>
+            <input
+              type="month"
+              value={syncMonth}
+              max={currentMonth}
+              onChange={(event) => setSyncMonth(event.target.value)}
+              className={FIELD}
+              style={{ width: 190 }}
+              aria-label="Mês da atualização da API"
+            />
+            <button onClick={handleImport} disabled={importing || !syncMonth} className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#57D100] px-5 text-sm font-semibold text-[#064E2C] shadow-sm transition hover:bg-[#4bc000] disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${importing ? 'animate-spin' : ''}`}/>{importing ? 'Atualizando...' : 'Atualizar dados da API'}</button>
             <button onClick={handleExport} disabled={exporting || count === 0} className="inline-flex h-11 items-center gap-2 rounded-xl border border-[#cfe0c5] bg-white px-5 text-sm font-semibold text-[#365b42] transition hover:bg-[#f7fbf4] disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"><Download className="h-4 w-4"/>{exporting ? 'Exportando...' : 'Exportar Excel'}</button>
           </div>
         </div>
@@ -287,7 +302,8 @@ const Registros = () => {
         <ApiBanner />
 
         <section className={`${CARD} mt-4 p-4`}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-[1.1fr_1fr_1fr_1fr_1fr_auto]">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[1.15fr_1.1fr_1fr_1fr_1fr_1fr_auto]">
+            <PeriodFilter startDate={filters.startDate} endDate={filters.endDate} onApply={applyPeriod} />
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Search className="h-4 w-4"/>Buscar</span><input value={filters.search} onChange={(event) => setFilters((old) => ({ ...old, search: event.target.value }))} placeholder="Digite o nome do colaborador..." className={FIELD}/></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Building className="h-4 w-4"/>Empresa</span><select value={filters.company} onChange={(event) => setFilters((old) => ({ ...old, company: event.target.value }))} className={FIELD}><option value="all">Todas as empresas</option>{options.companies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Users className="h-4 w-4"/>Colaborador</span><select value={filters.employee} onChange={(event) => setFilters((old) => ({ ...old, employee: event.target.value }))} className={FIELD}><option value="all">Todos os colaboradores</option>{options.employees.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>

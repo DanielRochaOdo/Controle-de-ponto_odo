@@ -164,10 +164,12 @@ export async function fetchFilterOptions(userId) {
   const { data, error } = await supabase.rpc('get_attendance_filter_options', { p_user_id: userId });
   if (error) throw error;
 
-  const catalogCompanies = FLASH_COMPANY_CATALOG.map((company) => company.name);
+  const companies = data?.isAdmin
+    ? [...(data?.companies || []), ...FLASH_COMPANY_CATALOG.map((company) => company.name)]
+    : (data?.companies || []);
 
   return {
-    companies: uniqueSorted([...(data?.companies || []), ...catalogCompanies]),
+    companies: uniqueSorted(companies),
     employees: uniqueSorted(data?.employees || []),
     departments: uniqueSorted(data?.departments || []),
   };
