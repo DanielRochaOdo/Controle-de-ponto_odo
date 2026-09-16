@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, EyeOff, KeyRound, Plus, RefreshCw, UserRound } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, Plus, RefreshCw, User } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import {
   createSystemUser,
@@ -192,7 +192,7 @@ const UsersSettings = () => {
                   <tr className="border-t border-[#edf3e9] dark:border-slate-800">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#eef9e7] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300"><UserRound className="h-4 w-4" /></span>
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#eef9e7] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300"><User className="h-4 w-4" /></span>
                         <span className="font-medium text-[#173c2c] dark:text-slate-100">{item.name || '—'}</span>
                       </div>
                     </td>
