@@ -23,8 +23,8 @@ export async function listSystemUsers() {
   return payload.users || [];
 }
 
-export async function createSystemUser({ name, email, password }) {
-  const payload = await authenticatedRequest('POST', { name, email, password });
+export async function createSystemUser({ name, email, password, role = 'manager' }) {
+  const payload = await authenticatedRequest('POST', { name, email, password, role });
   return payload.user;
 }
 
