@@ -1,6 +1,7 @@
+import { TimeNormalizationError, normalizeFlashTemporal } from './timezone.js';
+
 const FLASH_CORE_BASE_URL = 'https://api.flashapp.services/core/v1/';
 const FLASH_ATTENDANCE_BASE_URL = 'https://api.flashapp.services/time-and-attendance/v1/';
-const DEFAULT_TIMEZONE = process.env.APP_TIMEZONE || 'America/Fortaleza';
 
 const pick = (object, paths) => {
   for (const path of paths) {
@@ -10,6 +11,20 @@ const pick = (object, paths) => {
   return null;
 };
 const asArray = (value) => Array.isArray(value) ? value : [];
+
+async function parseFlashJson(response, url) {
+  const body = await response.text();
+  if (!body) return {};
+  try {
+    return JSON.parse(body);
+  } catch (cause) {
+    const error = new Error(`Flash API retornou JSON inválido em ${url.pathname}.`, { cause });
+    error.code = 'FLASH_INVALID_JSON';
+    error.status = response.status;
+    error.endpoint = `${url.origin}${url.pathname}`;
+    throw error;
+  }
+}
 
 async function flashGet(baseUrl, path, query = {}) {
   const apiKey = process.env.FLASH_API_KEY;
@@ -27,10 +42,11 @@ async function flashGet(baseUrl, path, query = {}) {
     },
   });
 
-  const payload = await response.json().catch(() => ({}));
+  const payload = await parseFlashJson(response, url);
 
   if (!response.ok) {
     const error = new Error(payload?.message || `Flash API respondeu ${response.status}`);
+    error.code = 'FLASH_HTTP_ERROR';
     error.status = response.status;
     error.endpoint = `${url.origin}${url.pathname}`;
     error.requestId = payload?.request_id || payload?.requestId || null;
@@ -103,55 +119,59 @@ export function parseTimetableName(value) {
   };
 }
 
-const normalizeClock = (value) => {
-  if (value === null || value === undefined) return null;
-  const raw = String(value).trim();
-  const directMatch = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.\d+)?)?$/);
-  if (directMatch) {
-    return `${directMatch[1].padStart(2, '0')}:${directMatch[2]}:${directMatch[3] || '00'}`;
-  }
-  const nonIsoMatch = raw.match(/(?:^|\s)([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d)(?:\.\d+)?)?(?:$|\s)/);
-  if (nonIsoMatch && !raw.includes('T')) {
-    return `${nonIsoMatch[1].padStart(2, '0')}:${nonIsoMatch[2]}:${nonIsoMatch[3] || '00'}`;
-  }
-  const parsed = new Date(raw);
-  if (!Number.isNaN(parsed.getTime())) {
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: DEFAULT_TIMEZONE,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    }).formatToParts(parsed);
-    const hour = parts.find((part) => part.type === 'hour')?.value;
-    const minute = parts.find((part) => part.type === 'minute')?.value;
-    const second = parts.find((part) => part.type === 'second')?.value;
-    if (hour && minute && second) return `${hour}:${minute}:${second}`;
-  }
-  return null;
+const normalizeClock = (value, field = null) => {
+  if (value === null || value === undefined || value === '') return null;
+  return normalizeFlashTemporal(value, { field }).time;
 };
 
-const markKeys = ['occurredAt', 'clockedAt', 'dateTime', 'datetime', 'timestamp', 'markedAt', 'attendanceAt', 'punchAt', 'time', 'hour', 'value', 'createdAt'];
+const MARK_TIME_FIELDS = [
+  'occurredAt',
+  'clockedAt',
+  'dateTime',
+  'datetime',
+  'timestamp',
+  'markedAt',
+  'attendanceAt',
+  'punchAt',
+  'time',
+  'hour',
+  'value',
+];
 
 function extractMarkTime(mark) {
-  if (typeof mark === 'string' || typeof mark === 'number') return normalizeClock(mark);
+  if (typeof mark === 'string' || typeof mark === 'number' || mark instanceof Date) {
+    return normalizeFlashTemporal(mark, { field: 'mark' });
+  }
   if (!mark || typeof mark !== 'object') return null;
-  return normalizeClock(pick(mark, markKeys));
+
+  for (const field of MARK_TIME_FIELDS) {
+    const value = mark[field];
+    if (value === undefined || value === null || value === '') continue;
+    return { ...normalizeFlashTemporal(value, { field }), field };
+  }
+
+  return null;
 }
 
-function findMarkArrays(value, depth = 0, result = []) {
+function findMarkArrays(value, depth = 0, result = [], seen = new Set()) {
   if (!value || depth > 5) return result;
   if (Array.isArray(value)) {
-    if (value.some((item) => extractMarkTime(item))) result.push(value);
-    value.forEach((item) => findMarkArrays(item, depth + 1, result));
+    value.forEach((item) => findMarkArrays(item, depth + 1, result, seen));
     return result;
   }
   if (typeof value === 'object') {
     Object.entries(value).forEach(([key, child]) => {
       const normalizedKey = key.toLowerCase();
       if (/(schedule|timetable|contract|shift|scale|escala)/.test(normalizedKey)) return;
-      if (Array.isArray(child) && /(punch|mark|attendance|clock|entr|batida|record|time)/.test(normalizedKey)) result.push(child);
-      findMarkArrays(child, depth + 1, result);
+      if (
+        Array.isArray(child)
+        && /(punch|mark|attendance|clock|entr|batida|record|time)/.test(normalizedKey)
+        && !seen.has(child)
+      ) {
+        seen.add(child);
+        result.push(child);
+      }
+      findMarkArrays(child, depth + 1, result, seen);
     });
   }
   return result;
@@ -168,19 +188,40 @@ function isAdjusted(value, depth = 0) {
   return false;
 }
 
-function collectPunches(items) {
+function collectPunches(items, day) {
   const values = [];
+  const addPunch = (temporal, adjusted) => {
+    if (!temporal) return;
+    values.push({
+      time: temporal.time,
+      localDate: temporal.localDate || day,
+      adjusted,
+      sourceKind: temporal.kind,
+      sourceField: temporal.field || null,
+    });
+  };
+
   items.forEach((item) => {
-    const ownTime = extractMarkTime(item);
-    if (ownTime) values.push({ time: ownTime, adjusted: isAdjusted(item) });
+    addPunch(extractMarkTime(item), isAdjusted(item));
     findMarkArrays(item).forEach((array) => array.forEach((mark) => {
-      const time = extractMarkTime(mark);
-      if (time) values.push({ time, adjusted: isAdjusted(mark) || isAdjusted(item) });
+      addPunch(extractMarkTime(mark), isAdjusted(mark) || isAdjusted(item));
     }));
   });
+
   const unique = new Map();
-  values.forEach((value) => unique.set(value.time, { ...unique.get(value.time), ...value, adjusted: value.adjusted || unique.get(value.time)?.adjusted }));
-  return [...unique.values()].sort((a, b) => a.time.localeCompare(b.time));
+  values.forEach((value) => {
+    const key = `${value.localDate}T${value.time}`;
+    const previous = unique.get(key);
+    unique.set(key, {
+      ...previous,
+      ...value,
+      adjusted: value.adjusted || previous?.adjusted || false,
+    });
+  });
+
+  return [...unique.values()].sort((a, b) => (
+    `${a.localDate}T${a.time}`.localeCompare(`${b.localDate}T${b.time}`)
+  ));
 }
 
 const timeToSeconds = (time) => {
@@ -196,7 +237,9 @@ const timeToSeconds = (time) => {
 function collectScheduleTimes(value, depth = 0, result = []) {
   if (value === null || value === undefined || depth > 6) return result;
   if (typeof value === 'string') {
-    if (!value.includes('T')) (value.match(/(?:[01]?\d|2[0-3]):[0-5]\d/g) || []).forEach((match) => result.push(match.padStart(5, '0')));
+    if (!/^\d{4}-\d{2}-\d{2}[T ]/.test(value)) {
+      (value.match(/(?:[01]?\d|2[0-3]):[0-5]\d/g) || []).forEach((match) => result.push(match.padStart(5, '0')));
+    }
     return result;
   }
   if (Array.isArray(value)) {
@@ -213,8 +256,14 @@ function collectScheduleTimes(value, depth = 0, result = []) {
 }
 
 function expectedTimesFromValue(value, allowRecursive = true) {
-  const explicitEntry = normalizeClock(pick(value, ['scheduledEntry', 'scheduled_entry', 'expectedEntry', 'entryTime', 'startTime', 'workStart']));
-  const explicitExit = normalizeClock(pick(value, ['scheduledExit', 'scheduled_exit', 'expectedExit', 'exitTime', 'endTime', 'workEnd']));
+  const explicitEntry = normalizeClock(
+    pick(value, ['scheduledEntry', 'scheduled_entry', 'expectedEntry', 'entryTime', 'startTime', 'workStart']),
+    'scheduledEntry',
+  );
+  const explicitExit = normalizeClock(
+    pick(value, ['scheduledExit', 'scheduled_exit', 'expectedExit', 'exitTime', 'endTime', 'workEnd']),
+    'scheduledExit',
+  );
   if (explicitEntry || explicitExit || !allowRecursive) return { entry: explicitEntry, exit: explicitExit };
   const times = [...new Set(collectScheduleTimes(value))].filter(Boolean).sort((a, b) => timeToSeconds(a) - timeToSeconds(b));
   return { entry: times[0] || null, exit: times[times.length - 1] || null };
@@ -275,6 +324,19 @@ function sanitizeAttendance(items) {
   });
 }
 
+function withTimeNormalizationContext(error, { companyId, employeeId, externalId, day }) {
+  if (!(error instanceof TimeNormalizationError)) return error;
+  const employeeRef = employeeId || externalId || 'sem-identificador';
+  const wrapped = new Error(
+    `Falha ao normalizar horário da Flash para America/Fortaleza (empresa=${companyId}, colaborador=${employeeRef}, data=${day}, campo=${error.field || 'desconhecido'}, valor=${error.inputPreview || 'nulo'}). ${error.message}`,
+    { cause: error },
+  );
+  wrapped.code = error.code;
+  wrapped.field = error.field;
+  wrapped.inputType = error.inputType;
+  return wrapped;
+}
+
 export function normalizeAttendanceDay({ day, attendance, employees, allocations, settings, companyId, userId, importRunId }) {
   const employeeById = new Map();
   const employeeByExternalId = new Map();
@@ -300,15 +362,39 @@ export function normalizeAttendanceDay({ day, attendance, employees, allocations
 
   return [...grouped.values()].map((group) => {
     const employee = group.employee || {};
-    const punches = collectPunches(group.items);
+    let punches;
+    let attendanceExpected;
+    try {
+      punches = collectPunches(group.items, day);
+      attendanceExpected = expectedTimesFromValue(group.items[0], false);
+    } catch (error) {
+      throw withTimeNormalizationContext(error, {
+        companyId,
+        employeeId: group.employeeId,
+        externalId: group.externalId,
+        day,
+      });
+    }
+
     const first = punches[0] || null;
     const last = punches.length >= 2 && punches.length % 2 === 0 ? punches[punches.length - 1] : null;
-    const attendanceExpected = expectedTimesFromValue(group.items[0], false);
     const allocation = findAllocation(allocations, {
       id: group.employeeId || String(employee.id || employee.flash_employee_id || ''),
       externalId: group.externalId || String(employee.externalId || employee.external_id || ''),
     }, day);
-    const allocationExpected = expectedTimesFromValue(allocation || {}, true);
+
+    let allocationExpected;
+    try {
+      allocationExpected = expectedTimesFromValue(allocation || {}, true);
+    } catch (error) {
+      throw withTimeNormalizationContext(error, {
+        companyId,
+        employeeId: group.employeeId,
+        externalId: group.externalId,
+        day,
+      });
+    }
+
     const scheduledEntry = attendanceExpected.entry || allocationExpected.entry;
     const scheduledExit = attendanceExpected.exit || allocationExpected.exit;
     const actualEntry = first?.time || null;
