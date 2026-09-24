@@ -48,14 +48,6 @@ const currentDateInAppTimezone = () => {
   return `${year}-${month}-${day}`;
 };
 
-const defaultSettings = {
-  on_time_tolerance: 5,
-  late_tolerance: 5,
-  late_exit_tolerance: 5,
-  early_tolerance: 5,
-  adjusted_tolerance: 0,
-};
-
 async function fetchDays(company, days) {
   const result = [];
   const concurrency = 5;
@@ -291,12 +283,10 @@ export default async function handler(req, res) {
 
     stage = 'carregamento da estrutura sincronizada';
     const [
-      { data: settingsRow, error: settingsError },
       employees,
       allocations,
       { data: employeeSyncRuns, error: structureSyncError },
     ] = await Promise.all([
-      supabase.from('attendance_settings').select('*').eq('user_id', userId).maybeSingle(),
       fetchAllSyncedRows(supabase, 'flash_employees', userId, 'flash_employee_id'),
       fetchAllSyncedRows(supabase, 'employee_schedule_allocations', userId, 'allocation_start_date'),
       supabase.from('flash_structure_sync_runs')
@@ -305,7 +295,6 @@ export default async function handler(req, res) {
         .eq('status', 'completed')
         .eq('sync_target', 'employees'),
     ]);
-    if (settingsError) throw settingsError;
     if (structureSyncError) throw structureSyncError;
 
     const companiesWithEmployeeSync = new Set((employeeSyncRuns || []).map((run) => run.company_key).filter(Boolean));
@@ -316,8 +305,6 @@ export default async function handler(req, res) {
         error: `Sincronize os funcionários destas empresas antes de atualizar os registros: ${companiesMissingEmployeeSync.map((company) => company.name).join(', ')}.`,
       });
     }
-
-    const settings = { ...defaultSettings, ...(settingsRow || {}) };
 
     runId = crypto.randomUUID();
     stage = 'criação do histórico de importação';
@@ -353,7 +340,6 @@ export default async function handler(req, res) {
         employees: resolved.employees,
         directory: resolved.directory,
         allocations: companyAllocations,
-        settings,
         companyId: company.id,
         userId,
         importRunId: runId,
