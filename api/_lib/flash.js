@@ -367,25 +367,6 @@ function findAllocation(allocations, employee, day) {
     .sort((a, b) => allocationStart(b).localeCompare(allocationStart(a)))[0] || null;
 }
 
-function evaluateStatus(expected, actual, settings, { exit = false, adjusted = false } = {}) {
-  if (!actual || !expected) return null;
-  if (adjusted) return 'adjusted';
-
-  const expectedSeconds = timeToSeconds(expected);
-  const actualSeconds = timeToSeconds(actual);
-  if (expectedSeconds === null || actualSeconds === null) return null;
-
-  const diffSeconds = actualSeconds - expectedSeconds;
-  const beforeMinutes = Math.max(0, Number(settings.early_tolerance ?? 5) || 0);
-  const afterMinutes = Math.max(0, Number(settings.late_tolerance ?? 5) || 0);
-  const beforeLimitSeconds = beforeMinutes * 60;
-  const afterLimitExclusiveSeconds = (afterMinutes + 1) * 60;
-
-  if (diffSeconds < -beforeLimitSeconds) return 'early';
-  if (diffSeconds >= afterLimitExclusiveSeconds) return exit ? 'late_exit' : 'late';
-  return 'on_time';
-}
-
 function sanitizeAttendance(items) {
   return items.map((item) => {
     if (!item || typeof item !== 'object') return item;
@@ -407,7 +388,7 @@ function withTimeNormalizationContext(error, { companyId, employeeId, externalId
   return wrapped;
 }
 
-export function normalizeAttendanceDay({ day, attendance, employees, allocations, settings, companyId, userId, importRunId, directory }) {
+export function normalizeAttendanceDay({ day, attendance, employees, allocations, companyId, userId, importRunId, directory }) {
   const employeeDirectory = directory || createEmployeeDirectory(employees, companyId);
   const grouped = new Map();
   attendance.forEach((item) => {
@@ -485,8 +466,10 @@ export function normalizeAttendanceDay({ day, attendance, employees, allocations
       scheduled_exit: scheduledExit,
       actual_entry: actualEntry,
       actual_exit: actualExit,
-      entry_status: evaluateStatus(scheduledEntry, actualEntry, settings, { adjusted: first?.adjusted }),
-      exit_status: evaluateStatus(scheduledExit, actualExit, settings, { exit: true, adjusted: last?.adjusted }),
+      // A Flash fornece apenas a informação de ajuste. A função/trigger do banco
+      // é a única responsável pelos limiares de classificação e pela recomputação.
+      entry_status: first?.adjusted ? 'adjusted' : null,
+      exit_status: last?.adjusted ? 'adjusted' : null,
       raw_payload: { attendance: sanitizeAttendance(group.items), allocation: allocation || null },
       imported_at: new Date().toISOString(),
     };
