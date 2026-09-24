@@ -303,37 +303,39 @@ const Configuracoes = () => {
 
             <div className="mt-4 grid gap-5 xl:grid-cols-2">
               <section className={PANEL}>
-                <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Tolerâncias por status</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">Cada status possui sua própria tolerância antes e depois do horário previsto.</p>
+                <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Tolerâncias de ponto</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">Defina quantos minutos de antecipação ou atraso serão aceitos. Dentro desses limites, a batida fica como No horário.</p>
 
-                <div className="mt-6 overflow-hidden rounded-xl border border-[#e2ecdc] dark:border-slate-800">
-                  <div className="grid grid-cols-[minmax(0,1fr)_110px_110px] gap-3 bg-[#f5faf1] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[#5a7564] dark:bg-slate-950 dark:text-slate-400">
-                    <span>Status</span>
-                    <span>Antes</span>
-                    <span>Depois</span>
-                  </div>
-                  <div className="divide-y divide-[#e8f0e3] dark:divide-slate-800">
-                    {STATUSES.map((status) => (
-                      <div key={status} className="grid grid-cols-[minmax(0,1fr)_110px_110px] items-center gap-3 px-4 py-3">
-                        <div className="min-w-0">
-                          <span className="block truncate text-sm font-medium text-slate-700 dark:text-slate-300">{STATUS_LABELS[status]}</span>
-                          {status === TimeRecordStatus.ADJUSTED && <span className="mt-0.5 block text-[11px] text-slate-400">O ajuste sinalizado pela Flash tem prioridade.</span>}
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <input aria-label={`${STATUS_LABELS[status]} antes`} type="number" min="0" max="60" step="1" value={settings.statusTolerances?.[status]?.before ?? 0} onChange={(event) => updateTolerance(status, 'before', event.target.value)} className={`${FIELD} w-full px-2 text-center`} />
-                          <span className="text-xs text-slate-400">min</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <input aria-label={`${STATUS_LABELS[status]} depois`} type="number" min="0" max="60" step="1" value={settings.statusTolerances?.[status]?.after ?? 0} onChange={(event) => updateTolerance(status, 'after', event.target.value)} className={`${FIELD} w-full px-2 text-center`} />
-                          <span className="text-xs text-slate-400">min</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                <div className="mt-6 divide-y divide-[#e8f0e3] overflow-hidden rounded-xl border border-[#e2ecdc] dark:divide-slate-800 dark:border-slate-800">
+                  {[
+                    { status: TimeRecordStatus.EARLY, side: 'before', label: 'Antecipação tolerada', detail: 'Minutos antes do previsto, para entrada e saída.' },
+                    { status: TimeRecordStatus.LATE, side: 'after', label: 'Atraso tolerado', detail: 'Minutos depois da entrada prevista.' },
+                    { status: TimeRecordStatus.LATE_EXIT, side: 'after', label: 'Saída após horário tolerada', detail: 'Minutos depois da saída prevista.' },
+                  ].map(({ status, side, label, detail }) => (
+                    <label key={status} className="flex flex-wrap items-center justify-between gap-3 px-4 py-4">
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
+                        <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{detail}</span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <input
+                          aria-label={label}
+                          type="number"
+                          min="0"
+                          max="60"
+                          step="1"
+                          value={settings.statusTolerances?.[status]?.[side] ?? 5}
+                          onChange={(event) => updateTolerance(status, side, event.target.value)}
+                          className={`${FIELD} w-20 px-2 text-center`}
+                        />
+                        <span className="text-xs text-slate-400">min</span>
+                      </span>
+                    </label>
+                  ))}
                 </div>
 
                 <div className="mt-4 rounded-xl bg-[#effbe8] px-4 py-3 text-xs leading-5 text-[#456454] dark:bg-emerald-950/40 dark:text-emerald-200">
-                  Os segundos fazem parte do limite. Ex.: para 08:00, uma tolerância de 1 minuto depois inclui até 08:01:59; 08:02:00 já fica fora dessa janela.
+                  Exemplo: saída prevista às 18:00, tolerância de 5 minutos depois: 18:01 até 18:05:59 ficam como No horário; a partir de 18:06:00, Saída após horário. Um ajuste registrado pela Flash permanece Ajustado.
                 </div>
               </section>
 
