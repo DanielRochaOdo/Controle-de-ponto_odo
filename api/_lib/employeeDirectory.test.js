@@ -93,3 +93,20 @@ test('sem cadastro Core não grava Colaborador + ID', () => {
     (error) => error.code === 'FLASH_ATTENDANCE_EMPLOYEE_NOT_FOUND',
   );
 });
+
+test('importação fornece somente ajuste Flash e delega limites de horário ao banco', () => {
+  const directory = createEmployeeDirectory(employees, companyId);
+  const normal = normalizeAttendanceDay(params([
+    { employeeId: 'core-1', time: '08:01:00' },
+    { employeeId: 'core-1', time: '18:01:00' },
+  ], directory));
+  assert.equal(normal[0].entry_status, null);
+  assert.equal(normal[0].exit_status, null);
+
+  const adjusted = normalizeAttendanceDay(params([
+    { employeeId: 'core-1', time: '08:01:00' },
+    { employeeId: 'core-1', time: '18:01:00', adjusted: true },
+  ], directory));
+  assert.equal(adjusted[0].entry_status, null);
+  assert.equal(adjusted[0].exit_status, 'adjusted');
+});
