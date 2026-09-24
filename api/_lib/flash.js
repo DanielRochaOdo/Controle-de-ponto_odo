@@ -65,13 +65,20 @@ function validateCoreEmployee(employee, companyId) {
     error.code = 'FLASH_CORE_EMPLOYEE_INVALID';
     throw error;
   }
-  // O identificador de empresa é validado quando disponibilizado pelo Core.
-  if (employee.companyId && String(employee.companyId) !== String(companyId)) {
-    const error = new Error(`Flash Core retornou colaborador de outra empresa (empresa solicitada=${companyId}, empresa retornada=${employee.companyId}, employeeId=${employee.id}).`);
+  return employee;
+}
+
+function assertCoreEmployeeCompany(employee, companyId) {
+  const employments = Array.isArray(employee.employments) ? employee.employments : [];
+  const associated = employments.some((employment) => (
+    String(employment.companyId || '') === String(companyId)
+    && employment.isActive !== false
+  ));
+  if (employee.companyId && String(employee.companyId) !== String(companyId) && !associated) {
+    const error = new Error(`Flash Core não confirmou vínculo do colaborador ${employee.id} com empresa ${companyId}.`);
     error.code = 'FLASH_CORE_EMPLOYEE_COMPANY_MISMATCH';
     throw error;
   }
-  return employee;
 }
 
 export async function getEmployeeById(companyId, employeeId) {
@@ -79,6 +86,7 @@ export async function getEmployeeById(companyId, employeeId) {
   // Endpoint oficial de detalhe: acionado apenas para IDs ausentes da listagem já sincronizada.
   const employee = await flashGet(FLASH_CORE_BASE_URL, `employees/${encodeURIComponent(employeeId)}`);
   const validated = validateCoreEmployee(employee, companyId);
+  assertCoreEmployeeCompany(validated, companyId);
   if (validated.id !== employeeId) {
     const error = new Error(`Flash Core retornou ID divergente para colaborador ${employeeId} (empresa=${companyId}).`);
     error.code = 'FLASH_CORE_EMPLOYEE_ID_MISMATCH';
@@ -87,12 +95,12 @@ export async function getEmployeeById(companyId, employeeId) {
   return validated;
 }
 
-export async function listEmployees(companyId) {
+export async function listEmployees(companyId, { externalIds = null } = {}) {
   const records = [];
   const seen = new Set();
   const limit = 100;
   for (let page = 1; page <= 100; page += 1) {
-    const payload = await flashGet(FLASH_CORE_BASE_URL, 'employees', { page, limit, companyId });
+    const payload = await flashGet(FLASH_CORE_BASE_URL, 'employees', { page, limit, companyId, externalIds });
     if (!Array.isArray(payload?.records)) {
       const error = new Error(`Flash Core retornou lista de funcionários sem records[] (empresa=${companyId}, página=${page}).`);
       error.code = 'FLASH_CORE_EMPLOYEE_RESPONSE_INVALID';
@@ -111,6 +119,7 @@ export async function listEmployees(companyId) {
     }
     const rawTotalPages = pick(payload, ['metadata.totalPages', 'metadata.pages']);
     const totalPages = rawTotalPages === null ? null : Number(rawTotalPages);
+    if (totalPages === 0 && page === 1 && current.length === 0) return records;
     if (totalPages !== null && (!Number.isInteger(totalPages) || totalPages < page)) {
       const error = new Error(`Paginação inconsistente no Flash Core (empresa=${companyId}, página=${page}, totalPages=${rawTotalPages}).`);
       error.code = 'FLASH_CORE_PAGINATION_INVALID';
