@@ -166,13 +166,23 @@ export async function reconcileAttendanceEmployees({ company, userId, supabase, 
 
   const syncedAt = new Date().toISOString();
   const recoveredRows = distinctDetails.map((employee) => {
-    const idsFromCore = Array.isArray(employee.departments) ? employee.departments : [];
-    const firstDepartment = idsFromCore[0] || employee.departmentId || null;
+    const employment = (Array.isArray(employee.employments) ? employee.employments : [])
+      .find((item) => identifier(item.companyId) === company.id);
+    const companyDepartments = Array.isArray(employment?.departments) ? employment.departments : [];
+    const topLevelDepartments = Array.isArray(employee.departments) ? employee.departments : [];
+    const firstDepartment = companyDepartments[0] || topLevelDepartments[0] || employee.departmentId || null;
     const departmentId = identifier(
       firstDepartment && typeof firstDepartment === 'object'
         ? firstDepartment.id || firstDepartment.departmentId
         : firstDepartment,
     );
+    if (departmentId && !departmentNames.has(departmentId)) {
+      throw new EmployeeIdentityError(
+        'FLASH_CORE_DEPARTMENT_UNRESOLVED',
+        `Colaborador ${employee.id} de ${company.name} tem departamento ${departmentId} não encontrado na Estrutura Flash. Sincronize Departamentos antes de importar.`,
+        { companyId: company.id, employeeId: employee.id, departmentId },
+      );
+    }
     const { documentNumber, pis, email, corporateEmail, phoneNumber, profilePicture, ...safe } = employee;
     return {
       user_id: userId,
