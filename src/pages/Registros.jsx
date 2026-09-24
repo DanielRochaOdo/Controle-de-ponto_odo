@@ -111,13 +111,16 @@ const Registros = () => {
   const [summaryRecords, setSummaryRecords] = useState([]);
   const [count, setCount] = useState(0);
   const [page, setPage] = useState(1);
-  const [options, setOptions] = useState({ companies: [], employees: [], departments: [] });
+  const [options, setOptions] = useState({ companies: [], employees: [], employeesByCompany: {}, departments: [] });
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
+  const availableEmployees = filters.company === 'all'
+    ? options.employees
+    : (options.employeesByCompany[filters.company] || []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -305,8 +308,13 @@ const Registros = () => {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[1.15fr_1.1fr_1fr_1fr_1fr_1fr_auto]">
             <PeriodFilter startDate={filters.startDate} endDate={filters.endDate} onApply={applyPeriod} />
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Search className="h-4 w-4"/>Buscar</span><input value={filters.search} onChange={(event) => setFilters((old) => ({ ...old, search: event.target.value }))} placeholder="Digite o nome do colaborador..." className={FIELD}/></label>
-            <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Building className="h-4 w-4"/>Empresa</span><select value={filters.company} onChange={(event) => setFilters((old) => ({ ...old, company: event.target.value }))} className={FIELD}><option value="all">Todas as empresas</option>{options.companies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-            <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Users className="h-4 w-4"/>Colaborador</span><select value={filters.employee} onChange={(event) => setFilters((old) => ({ ...old, employee: event.target.value }))} className={FIELD}><option value="all">Todos os colaboradores</option>{options.employees.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+            <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Building className="h-4 w-4"/>Empresa</span><select value={filters.company} onChange={(event) => setFilters((old) => ({
+              ...old,
+              company: event.target.value,
+              employee: 'all',
+              department: 'all',
+            }))} className={FIELD}><option value="all">Todas as empresas</option>{options.companies.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+            <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Users className="h-4 w-4"/>Colaborador</span><select value={filters.employee} onChange={(event) => setFilters((old) => ({ ...old, employee: event.target.value }))} className={FIELD}><option value="all">Todos os colaboradores</option>{availableEmployees.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><FileText className="h-4 w-4"/>Departamento</span><select value={filters.department} onChange={(event) => setFilters((old) => ({ ...old, department: event.target.value }))} className={FIELD}><option value="all">Todos os departamentos</option>{options.departments.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
             <label><span className="mb-2 flex items-center gap-2 text-xs font-semibold text-[#425c4e] dark:text-slate-300"><Clock3 className="h-4 w-4"/>Status</span><select value={filters.status} onChange={(event) => setFilters((old) => ({ ...old, status: event.target.value }))} className={FIELD}><option value="all">Todos os status</option>{STATUS_OPTIONS.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}</select></label>
             <button onClick={clearFilters} className="mt-6 inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#cfe0c5] px-4 text-sm font-semibold text-[#2f8f17] transition hover:bg-[#f7fbf4] dark:border-slate-700 dark:text-emerald-300 dark:hover:bg-slate-800"><Settings className="h-4 w-4"/>Limpar filtros</button>
