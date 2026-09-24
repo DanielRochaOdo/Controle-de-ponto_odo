@@ -70,10 +70,9 @@ function validateCoreEmployee(employee, companyId) {
 
 function assertCoreEmployeeCompany(employee, companyId) {
   const employments = Array.isArray(employee.employments) ? employee.employments : [];
-  const associated = employments.some((employment) => (
-    String(employment.companyId || '') === String(companyId)
-    && employment.isActive !== false
-  ));
+  // Vínculos inativos também são legítimos para marcações históricas.
+  const associated = employments.some((employment) =>
+    String(employment.companyId || '') === String(companyId));
   if (employee.companyId && String(employee.companyId) !== String(companyId) && !associated) {
     const error = new Error(`Flash Core não confirmou vínculo do colaborador ${employee.id} com empresa ${companyId}.`);
     error.code = 'FLASH_CORE_EMPLOYEE_COMPANY_MISMATCH';
