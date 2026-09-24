@@ -1,4 +1,5 @@
 import { TimeNormalizationError, normalizeFlashTemporal } from './timezone.js';
+import { attendanceIdentity, createEmployeeDirectory, EmployeeIdentityError, identifier } from './employeeDirectory.js';
 
 const FLASH_CORE_BASE_URL = 'https://api.flashapp.services/core/v1/';
 const FLASH_ATTENDANCE_BASE_URL = 'https://api.flashapp.services/time-and-attendance/v1/';
@@ -56,19 +57,83 @@ async function flashGet(baseUrl, path, query = {}) {
   return payload;
 }
 
-export async function listEmployees(companyId) {
-  const records = [];
-  let page = 1;
-  const limit = 100;
-  while (page <= 100) {
-    const payload = await flashGet(FLASH_CORE_BASE_URL, 'employees', { page, limit, companyId });
-    const current = asArray(payload?.records);
-    records.push(...current);
-    const totalPages = Number(pick(payload, ['metadata.totalPages', 'metadata.pages'])) || null;
-    if ((totalPages && page >= totalPages) || current.length < limit) break;
-    page += 1;
+function validateCoreEmployee(employee, companyId) {
+  if (!employee || typeof employee !== 'object' || Array.isArray(employee) ||
+      typeof employee.id !== 'string' || !employee.id.trim() ||
+      typeof employee.name !== 'string' || !employee.name.trim()) {
+    const error = new Error(`Flash Core retornou colaborador sem id ou name válido (empresa=${companyId}).`);
+    error.code = 'FLASH_CORE_EMPLOYEE_INVALID';
+    throw error;
   }
-  return records;
+  return employee;
+}
+
+function assertCoreEmployeeCompany(employee, companyId) {
+  const employments = Array.isArray(employee.employments) ? employee.employments : [];
+  // Vínculos inativos também são legítimos para marcações históricas.
+  const associated = employments.some((employment) =>
+    String(employment.companyId || '') === String(companyId));
+  if (employee.companyId && String(employee.companyId) !== String(companyId) && !associated) {
+    const error = new Error(`Flash Core não confirmou vínculo do colaborador ${employee.id} com empresa ${companyId}.`);
+    error.code = 'FLASH_CORE_EMPLOYEE_COMPANY_MISMATCH';
+    throw error;
+  }
+}
+
+export async function getEmployeeById(companyId, employeeId) {
+  if (!employeeId || typeof employeeId !== 'string') throw new Error('employeeId obrigatório para consulta individual no Flash Core.');
+  // Endpoint oficial de detalhe: acionado apenas para IDs ausentes da listagem já sincronizada.
+  const employee = await flashGet(FLASH_CORE_BASE_URL, `employees/${encodeURIComponent(employeeId)}`);
+  const validated = validateCoreEmployee(employee, companyId);
+  assertCoreEmployeeCompany(validated, companyId);
+  if (validated.id !== employeeId) {
+    const error = new Error(`Flash Core retornou ID divergente para colaborador ${employeeId} (empresa=${companyId}).`);
+    error.code = 'FLASH_CORE_EMPLOYEE_ID_MISMATCH';
+    throw error;
+  }
+  return validated;
+}
+
+export async function listEmployees(companyId, { externalIds = null } = {}) {
+  const records = [];
+  const seen = new Set();
+  const limit = 100;
+  for (let page = 1; page <= 100; page += 1) {
+    const payload = await flashGet(FLASH_CORE_BASE_URL, 'employees', { page, limit, companyId, externalIds });
+    if (!Array.isArray(payload?.records)) {
+      const error = new Error(`Flash Core retornou lista de funcionários sem records[] (empresa=${companyId}, página=${page}).`);
+      error.code = 'FLASH_CORE_EMPLOYEE_RESPONSE_INVALID';
+      throw error;
+    }
+    const current = payload.records;
+    for (const value of current) {
+      const employee = validateCoreEmployee(value, companyId);
+      if (seen.has(employee.id)) {
+        const error = new Error(`Flash Core repetiu employeeId ${employee.id} na paginação (empresa=${companyId}, página=${page}).`);
+        error.code = 'FLASH_CORE_EMPLOYEE_DUPLICATE';
+        throw error;
+      }
+      seen.add(employee.id);
+      records.push(employee);
+    }
+    const rawTotalPages = pick(payload, ['metadata.totalPages', 'metadata.pages']);
+    const totalPages = rawTotalPages === null ? null : Number(rawTotalPages);
+    if (totalPages === 0 && page === 1 && current.length === 0) return records;
+    if (totalPages !== null && (!Number.isInteger(totalPages) || totalPages < page)) {
+      const error = new Error(`Paginação inconsistente no Flash Core (empresa=${companyId}, página=${page}, totalPages=${rawTotalPages}).`);
+      error.code = 'FLASH_CORE_PAGINATION_INVALID';
+      throw error;
+    }
+    if (totalPages !== null ? page >= totalPages : current.length < limit) return records;
+    if (current.length === 0) {
+      const error = new Error(`Flash Core retornou página vazia antes do fim (empresa=${companyId}, página=${page}, totalPages=${totalPages}).`);
+      error.code = 'FLASH_CORE_PAGINATION_INVALID';
+      throw error;
+    }
+  }
+  const error = new Error(`Flash Core excedeu 100 páginas de funcionários na empresa ${companyId}; sincronização interrompida para não gravar cadastro incompleto.`);
+  error.code = 'FLASH_CORE_PAGINATION_LIMIT';
+  throw error;
 }
 
 export async function listDepartments(companyId) {
@@ -89,7 +154,12 @@ export async function listTimetableAllocations(companyId, startDate, endDate, em
 
 export async function listAttendanceDay(companyId, date) {
   const payload = await flashGet(FLASH_ATTENDANCE_BASE_URL, 'attendance/day', { companyId, date });
-  return asArray(payload?.data);
+  if (!Array.isArray(payload?.data)) {
+    const error = new Error(`Flash retornou resposta de marcações sem data[] (empresa=${companyId}, data=${date}).`);
+    error.code = 'FLASH_ATTENDANCE_RESPONSE_INVALID';
+    throw error;
+  }
+  return payload.data;
 }
 
 export function dateRange(startDate, endDate) {
@@ -337,31 +407,31 @@ function withTimeNormalizationContext(error, { companyId, employeeId, externalId
   return wrapped;
 }
 
-export function normalizeAttendanceDay({ day, attendance, employees, allocations, settings, companyId, userId, importRunId }) {
-  const employeeById = new Map();
-  const employeeByExternalId = new Map();
-  employees.forEach((employee) => {
-    const id = String(employee?.id || employee?.flash_employee_id || '');
-    const externalId = String(employee?.externalId || employee?.external_id || '');
-    if (id) employeeById.set(id, employee);
-    if (externalId) employeeByExternalId.set(externalId, employee);
-  });
-
+export function normalizeAttendanceDay({ day, attendance, employees, allocations, settings, companyId, userId, importRunId, directory }) {
+  const employeeDirectory = directory || createEmployeeDirectory(employees, companyId);
   const grouped = new Map();
-  attendance.forEach((item, index) => {
-    const identity = employeeIdentity(item);
-    const employee = employeeById.get(identity.id) || employeeByExternalId.get(identity.externalId);
-    const employeeId = identity.id || String(employee?.id || employee?.flash_employee_id || '');
-    const externalId = identity.externalId || String(employee?.externalId || employee?.external_id || '');
-    const employeeName = employee?.name || employee?.employee_name;
-    const fallbackName = String(pick(item, ['employeeName', 'employee.name', 'name']) || employeeName || `Colaborador ${externalId || employeeId || index + 1}`);
-    const key = employeeId || externalId || fallbackName;
-    if (!grouped.has(key)) grouped.set(key, { employeeId, externalId, employee, items: [], fallbackName });
-    grouped.get(key).items.push(item);
+  attendance.forEach((item) => {
+    const identity = attendanceIdentity(item);
+    const employee = employeeDirectory.resolve(identity);
+    if (!employee) {
+      throw new EmployeeIdentityError(
+        'FLASH_ATTENDANCE_EMPLOYEE_NOT_FOUND',
+        `Marcação sem cadastro Core correspondente (empresa=${companyId}, data=${day}, employeeId=${identity.id || 'ausente'}, externalId=${identity.externalId || 'ausente'}).`,
+        { companyId, day, employeeId: identity.id, externalId: identity.externalId },
+      );
+    }
+    const employeeId = identifier(employee.flash_employee_id);
+    if (!grouped.has(employeeId)) grouped.set(employeeId, {
+      employeeId,
+      externalId: identifier(employee.external_id),
+      employee,
+      items: [],
+    });
+    grouped.get(employeeId).items.push(item);
   });
 
   return [...grouped.values()].map((group) => {
-    const employee = group.employee || {};
+    const employee = group.employee;
     let punches;
     let attendanceExpected;
     try {
@@ -399,9 +469,9 @@ export function normalizeAttendanceDay({ day, attendance, employees, allocations
     const scheduledExit = attendanceExpected.exit || allocationExpected.exit;
     const actualEntry = first?.time || null;
     const actualExit = last?.time || null;
-    const employeeName = employee.name || employee.employee_name || group.fallbackName;
+    const employeeName = employee.employee_name;
     const department = pick(employee, ['departments.0.name', 'department.name', 'department', 'department_name']) || pick(group.items[0], ['departmentName', 'department.name', 'department']) || null;
-    const stableEmployeeId = group.employeeId || group.externalId || employeeName;
+    const stableEmployeeId = group.employeeId;
 
     return {
       user_id: userId,
