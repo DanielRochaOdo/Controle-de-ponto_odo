@@ -97,7 +97,7 @@ async function fetchAllSyncedRows(supabase, table, userId, orderColumn) {
  * oficial de detalhe do Core somente para IDs ausentes na listagem previamente
  * sincronizada; sem correspondência comprovada, interrompe a importação.
  */
-async function reconcileAttendanceEmployees({ company, userId, supabase, dailyPayloads, employees }) {
+export async function reconcileAttendanceEmployees({ company, userId, supabase, dailyPayloads, employees }) {
   let directory = createEmployeeDirectory(employees, company.id);
   const missing = missingAttendanceEmployees(dailyPayloads, directory);
   if (!missing.length) return { employees, directory, recovered: 0 };
