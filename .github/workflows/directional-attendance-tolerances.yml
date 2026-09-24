@@ -40,4 +40,5 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - run: node --test api/_lib/*.test.js
       - run: npm run build
