@@ -1,0 +1,43 @@
+name: Tolerâncias direcionais
+
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+      - "src/pages/Configuracoes.jsx"
+      - "tests/sql/**"
+      - "package*.json"
+      - ".github/workflows/directional-attendance-tolerances.yml"
+  push:
+    branches:
+      - fix/directional-attendance-tolerances
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d testdb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Testar classificação e migração no PostgreSQL
+        env:
+          PGCONNECT: postgres://postgres:test@localhost:5432/testdb
+        run: psql "$PGCONNECT" -v ON_ERROR_STOP=1 -f tests/sql/directional_attendance_tolerances.sql
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
