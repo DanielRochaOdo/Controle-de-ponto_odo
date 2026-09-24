@@ -1,4 +1,5 @@
 import { TimeNormalizationError, normalizeFlashTemporal } from './timezone.js';
+import { attendanceIdentity, createEmployeeDirectory, EmployeeIdentityError, identifier } from './employeeDirectory.js';
 
 const FLASH_CORE_BASE_URL = 'https://api.flashapp.services/core/v1/';
 const FLASH_ATTENDANCE_BASE_URL = 'https://api.flashapp.services/time-and-attendance/v1/';
@@ -398,31 +399,31 @@ function withTimeNormalizationContext(error, { companyId, employeeId, externalId
   return wrapped;
 }
 
-export function normalizeAttendanceDay({ day, attendance, employees, allocations, settings, companyId, userId, importRunId }) {
-  const employeeById = new Map();
-  const employeeByExternalId = new Map();
-  employees.forEach((employee) => {
-    const id = String(employee?.id || employee?.flash_employee_id || '');
-    const externalId = String(employee?.externalId || employee?.external_id || '');
-    if (id) employeeById.set(id, employee);
-    if (externalId) employeeByExternalId.set(externalId, employee);
-  });
-
+export function normalizeAttendanceDay({ day, attendance, employees, allocations, settings, companyId, userId, importRunId, directory }) {
+  const employeeDirectory = directory || createEmployeeDirectory(employees, companyId);
   const grouped = new Map();
-  attendance.forEach((item, index) => {
-    const identity = employeeIdentity(item);
-    const employee = employeeById.get(identity.id) || employeeByExternalId.get(identity.externalId);
-    const employeeId = identity.id || String(employee?.id || employee?.flash_employee_id || '');
-    const externalId = identity.externalId || String(employee?.externalId || employee?.external_id || '');
-    const employeeName = employee?.name || employee?.employee_name;
-    const fallbackName = String(pick(item, ['employeeName', 'employee.name', 'name']) || employeeName || `Colaborador ${externalId || employeeId || index + 1}`);
-    const key = employeeId || externalId || fallbackName;
-    if (!grouped.has(key)) grouped.set(key, { employeeId, externalId, employee, items: [], fallbackName });
-    grouped.get(key).items.push(item);
+  attendance.forEach((item) => {
+    const identity = attendanceIdentity(item);
+    const employee = employeeDirectory.resolve(identity);
+    if (!employee) {
+      throw new EmployeeIdentityError(
+        'FLASH_ATTENDANCE_EMPLOYEE_NOT_FOUND',
+        `Marcação sem cadastro Core correspondente (empresa=${companyId}, data=${day}, employeeId=${identity.id || 'ausente'}, externalId=${identity.externalId || 'ausente'}).`,
+        { companyId, day, employeeId: identity.id, externalId: identity.externalId },
+      );
+    }
+    const employeeId = identifier(employee.flash_employee_id);
+    if (!grouped.has(employeeId)) grouped.set(employeeId, {
+      employeeId,
+      externalId: identifier(employee.external_id),
+      employee,
+      items: [],
+    });
+    grouped.get(employeeId).items.push(item);
   });
 
   return [...grouped.values()].map((group) => {
-    const employee = group.employee || {};
+    const employee = group.employee;
     let punches;
     let attendanceExpected;
     try {
@@ -460,9 +461,9 @@ export function normalizeAttendanceDay({ day, attendance, employees, allocations
     const scheduledExit = attendanceExpected.exit || allocationExpected.exit;
     const actualEntry = first?.time || null;
     const actualExit = last?.time || null;
-    const employeeName = employee.name || employee.employee_name || group.fallbackName;
+    const employeeName = employee.employee_name;
     const department = pick(employee, ['departments.0.name', 'department.name', 'department', 'department_name']) || pick(group.items[0], ['departmentName', 'department.name', 'department']) || null;
-    const stableEmployeeId = group.employeeId || group.externalId || employeeName;
+    const stableEmployeeId = group.employeeId;
 
     return {
       user_id: userId,
