@@ -5,6 +5,7 @@ import {
   listAttendanceDay,
   normalizeAttendanceDay,
   getEmployeeById,
+  listEmployees,
 } from './_lib/flash.js';
 import {
   attendanceIdentity,
@@ -101,27 +102,18 @@ async function reconcileAttendanceEmployees({ company, userId, supabase, dailyPa
   const missing = missingAttendanceEmployees(dailyPayloads, directory);
   if (!missing.length) return { employees, directory, recovered: 0 };
 
-  const withoutCoreId = missing.filter((identity) => !identity.id);
-  if (withoutCoreId.length) {
-    const ids = withoutCoreId.map(({ externalId, day }) => `${externalId} (${day})`).join(', ');
-    throw new EmployeeIdentityError(
-      'FLASH_CORE_EMPLOYEE_UNRESOLVED',
-      `Não foi possível identificar ${withoutCoreId.length} colaborador(es) de ${company.name} pelo externalId: ${ids}. A listagem Core não contém esses vínculos. Verifique o cadastro na Flash; nenhum nome será inventado.`,
-      { companyId: company.id },
-    );
-  }
-
-  const ids = [...new Set(missing.map((identity) => identity.id))];
-  if (ids.length > 100) {
+  const ids = [...new Set(missing.map((identity) => identity.id).filter(Boolean))];
+  const externalOnly = [...new Set(missing.filter((identity) => !identity.id).map((identity) => identity.externalId))];
+  if (ids.length + externalOnly.length > 100) {
     throw new EmployeeIdentityError(
       'FLASH_CORE_RECONCILIATION_LIMIT',
-      `${company.name}: ${ids.length} IDs ausentes na lista de funcionários Core. Sincronização cadastral incompleta; importação interrompida.`,
+      `${company.name}: ${ids.length + externalOnly.length} identificadores ausentes na lista Core. Sincronização cadastral incompleta; importação interrompida.`,
       { companyId: company.id },
     );
   }
 
   console.info('[Flash] Reconciliando IDs ausentes no Core', {
-    companyId: company.id, missingEmployees: ids.length,
+    companyId: company.id, missingEmployeeIds: ids.length, missingExternalIds: externalOnly.length,
   });
 
   const details = [];
@@ -141,6 +133,27 @@ async function reconcileAttendanceEmployees({ company, userId, supabase, dailyPa
     details.push(...rows);
   }
 
+  // O Core também documenta a pesquisa por externalIds na própria listagem.
+  // Ela só é utilizada para matrículas sem employeeId, uma vez por ID distinto.
+  for (let index = 0; index < externalOnly.length; index += 5) {
+    const group = externalOnly.slice(index, index + 5);
+    const retrieved = await Promise.all(group.map(async (externalId) => {
+      const candidates = await listEmployees(company.id, { externalIds: externalId });
+      const matches = candidates.filter((candidate) => identifier(candidate.externalId) === externalId);
+      if (matches.length !== 1) {
+        throw new EmployeeIdentityError(
+          'FLASH_CORE_EMPLOYEE_UNRESOLVED',
+          `A matrícula externa ${externalId} de ${company.name} não foi associada de maneira única na API Core. Verifique o cadastro do colaborador na Flash.`,
+          { companyId: company.id, externalId },
+        );
+      }
+      return matches[0];
+    }));
+    details.push(...retrieved);
+  }
+
+  const distinctDetails = [...new Map(details.map((employee) => [employee.id, employee])).values()];
+
   const { data: syncedDepartments, error: departmentsError } = await supabase
     .from('flash_departments')
     .select('flash_department_id,name')
@@ -152,7 +165,7 @@ async function reconcileAttendanceEmployees({ company, userId, supabase, dailyPa
   ]));
 
   const syncedAt = new Date().toISOString();
-  const recoveredRows = details.map((employee) => {
+  const recoveredRows = distinctDetails.map((employee) => {
     const idsFromCore = Array.isArray(employee.departments) ? employee.departments : [];
     const firstDepartment = idsFromCore[0] || employee.departmentId || null;
     const departmentId = identifier(
@@ -408,6 +421,7 @@ export default async function handler(req, res) {
     return res.status(500).json({
       stage,
       error: error?.message || 'Falha ao importar dados da Flash.',
+      code: error?.code || null,
       flashStatus: error?.status || null,
       flashEndpoint: error?.endpoint || null,
       flashRequestId: error?.requestId || null,
