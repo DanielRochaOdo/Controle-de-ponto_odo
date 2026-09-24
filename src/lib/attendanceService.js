@@ -168,9 +168,17 @@ export async function fetchFilterOptions(userId) {
     ? [...(data?.companies || []), ...FLASH_COMPANY_CATALOG.map((company) => company.name)]
     : (data?.companies || []);
 
+  const employeesByCompany = Object.fromEntries(
+    Object.entries(data?.employeesByCompany || {}).map(([companyName, employees]) => [
+      companyName,
+      uniqueSorted(employees),
+    ]),
+  );
+
   return {
     companies: uniqueSorted(companies),
     employees: uniqueSorted(data?.employees || []),
+    employeesByCompany,
     departments: uniqueSorted(data?.departments || []),
   };
 }
