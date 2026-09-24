@@ -19,8 +19,20 @@ export function attendanceIdentity(item) {
   if (!item || typeof item !== 'object' || Array.isArray(item)) {
     throw new EmployeeIdentityError('FLASH_ATTENDANCE_IDENTITY_INVALID', 'Marcação não contém um objeto de colaborador válido.');
   }
-  const id = identifier(item.employeeId);
-  const externalId = identifier(item.externalId);
+  const topId = identifier(item.employeeId);
+  const nestedId = identifier(item.employee?.id);
+  const topExternal = identifier(item.externalId);
+  const nestedExternal = identifier(item.employee?.externalId);
+  if ((topId && nestedId && topId !== nestedId) ||
+      (topExternal && nestedExternal && topExternal !== nestedExternal)) {
+    throw new EmployeeIdentityError(
+      'FLASH_ATTENDANCE_IDENTITY_CONFLICT',
+      'A marcação contém identificadores diferentes nos campos principal e aninhado do colaborador.',
+      { employeeId: topId || nestedId, externalId: topExternal || nestedExternal },
+    );
+  }
+  const id = topId || nestedId;
+  const externalId = topExternal || nestedExternal;
   if (!id && !externalId) {
     throw new EmployeeIdentityError(
       'FLASH_ATTENDANCE_IDENTITY_MISSING',
