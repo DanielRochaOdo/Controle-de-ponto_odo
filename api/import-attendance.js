@@ -4,7 +4,15 @@ import {
   dateRange,
   listAttendanceDay,
   normalizeAttendanceDay,
+  getEmployeeById,
 } from './_lib/flash.js';
+import {
+  attendanceIdentity,
+  createEmployeeDirectory,
+  EmployeeIdentityError,
+  identifier,
+  missingAttendanceEmployees,
+} from './_lib/employeeDirectory.js';
 import { getConfiguredFlashCompanies, getMissingFlashCompanies } from './_lib/flashCompanies.js';
 
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Fortaleza';
@@ -83,21 +91,113 @@ async function fetchAllSyncedRows(supabase, table, userId, orderColumn) {
   return result;
 }
 
-function findUnknownAttendanceEmployees(dailyPayloads, employees) {
-  const ids = new Set(employees.map((employee) => String(employee.flash_employee_id || '')).filter(Boolean));
-  const externalIds = new Set(employees.map((employee) => String(employee.external_id || '')).filter(Boolean));
-  const missing = new Set();
+/**
+ * Uma resposta de marcação não é cadastro de pessoas. Consulta o endpoint
+ * oficial de detalhe do Core somente para IDs ausentes na listagem previamente
+ * sincronizada; sem correspondência comprovada, interrompe a importação.
+ */
+async function reconcileAttendanceEmployees({ company, userId, supabase, dailyPayloads, employees }) {
+  let directory = createEmployeeDirectory(employees, company.id);
+  const missing = missingAttendanceEmployees(dailyPayloads, directory);
+  if (!missing.length) return { employees, directory, recovered: 0 };
 
-  dailyPayloads.forEach(({ attendance }) => {
-    attendance.forEach((item) => {
-      const employeeId = String(item?.employeeId || '');
-      const externalId = String(item?.externalId || '');
-      if ((employeeId && ids.has(employeeId)) || (externalId && externalIds.has(externalId))) return;
-      missing.add(employeeId || externalId || 'sem-identificador');
-    });
+  const withoutCoreId = missing.filter((identity) => !identity.id);
+  if (withoutCoreId.length) {
+    const ids = withoutCoreId.map(({ externalId, day }) => `${externalId} (${day})`).join(', ');
+    throw new EmployeeIdentityError(
+      'FLASH_CORE_EMPLOYEE_UNRESOLVED',
+      `Não foi possível identificar ${withoutCoreId.length} colaborador(es) de ${company.name} pelo externalId: ${ids}. A listagem Core não contém esses vínculos. Verifique o cadastro na Flash; nenhum nome será inventado.`,
+      { companyId: company.id },
+    );
+  }
+
+  const ids = [...new Set(missing.map((identity) => identity.id))];
+  if (ids.length > 100) {
+    throw new EmployeeIdentityError(
+      'FLASH_CORE_RECONCILIATION_LIMIT',
+      `${company.name}: ${ids.length} IDs ausentes na lista de funcionários Core. Sincronização cadastral incompleta; importação interrompida.`,
+      { companyId: company.id },
+    );
+  }
+
+  console.info('[Flash] Reconciliando IDs ausentes no Core', {
+    companyId: company.id, missingEmployees: ids.length,
   });
 
-  return [...missing];
+  const details = [];
+  for (let index = 0; index < ids.length; index += 5) {
+    const batch = ids.slice(index, index + 5);
+    const rows = await Promise.all(batch.map(async (employeeId) => {
+      try {
+        return await getEmployeeById(company.id, employeeId);
+      } catch (cause) {
+        throw new EmployeeIdentityError(
+          'FLASH_CORE_EMPLOYEE_UNRESOLVED',
+          `A marcação de ${company.name} referencia employeeId=${employeeId}, mas o cadastro individual não foi obtido no Core (${cause.message}). Confira a empresa e o vínculo desse funcionário na Flash.`,
+          { companyId: company.id, employeeId },
+        );
+      }
+    }));
+    details.push(...rows);
+  }
+
+  const { data: syncedDepartments, error: departmentsError } = await supabase
+    .from('flash_departments')
+    .select('flash_department_id,name')
+    .eq('user_id', userId)
+    .eq('flash_company_id', company.id);
+  if (departmentsError) throw departmentsError;
+  const departmentNames = new Map((syncedDepartments || []).map((department) => [
+    identifier(department.flash_department_id), department.name,
+  ]));
+
+  const syncedAt = new Date().toISOString();
+  const recoveredRows = details.map((employee) => {
+    const idsFromCore = Array.isArray(employee.departments) ? employee.departments : [];
+    const firstDepartment = idsFromCore[0] || employee.departmentId || null;
+    const departmentId = identifier(
+      firstDepartment && typeof firstDepartment === 'object'
+        ? firstDepartment.id || firstDepartment.departmentId
+        : firstDepartment,
+    );
+    const { documentNumber, pis, email, corporateEmail, phoneNumber, profilePicture, ...safe } = employee;
+    return {
+      user_id: userId,
+      flash_company_id: company.id,
+      company_key: company.key,
+      company_name: company.name,
+      company_cnpj: company.cnpj,
+      flash_employee_id: employee.id,
+      external_id: identifier(employee.externalId) || null,
+      employee_name: employee.name.trim(),
+      status: employee.status || null,
+      flash_department_id: departmentId || null,
+      department_name: departmentId ? departmentNames.get(departmentId) || null : null,
+      raw_payload: safe,
+      synced_at: syncedAt,
+    };
+  });
+
+  const { error: upsertError } = await supabase.from('flash_employees')
+    .upsert(recoveredRows, { onConflict: 'user_id,flash_company_id,flash_employee_id' });
+  if (upsertError) throw upsertError;
+
+  const merged = [...employees, ...recoveredRows];
+  directory = createEmployeeDirectory(merged, company.id);
+  const unresolved = missingAttendanceEmployees(dailyPayloads, directory);
+  if (unresolved.length) {
+    const sample = unresolved.slice(0, 10).map(({ id, externalId, day }) =>
+      `employeeId=${id || 'ausente'},externalId=${externalId || 'ausente'},dia=${day}`).join('; ');
+    throw new EmployeeIdentityError(
+      'FLASH_ATTENDANCE_EMPLOYEE_UNRESOLVED',
+      `Flash retornou IDs conflitantes ou sem vínculo Core em ${company.name}: ${sample}. Importação interrompida.`,
+      { companyId: company.id },
+    );
+  }
+  console.info('[Flash] Colaboradores conciliados com o Core', {
+    companyId: company.id, recoveredEmployees: recoveredRows.length,
+  });
+  return { employees: merged, directory, recovered: recoveredRows.length };
 }
 
 const rowsForCompany = (rows, company) => rows.filter((row) => row.flash_company_id === company.id);
@@ -218,17 +318,17 @@ export default async function handler(req, res) {
       stage = `consulta das marcações diárias - ${company.name}`;
       const dailyPayloads = await fetchDays(company, days);
 
-      stage = `validação da estrutura sincronizada - ${company.name}`;
-      const unknownEmployees = findUnknownAttendanceEmployees(dailyPayloads, companyEmployees);
-      if (unknownEmployees.length) {
-        throw new Error(`A empresa ${company.name} possui marcações de ${unknownEmployees.length} colaborador(es) que não existem na estrutura sincronizada. Sincronize os funcionários desta empresa em Configurações e tente novamente.`);
-      }
+      stage = `conciliação dos IDs com o cadastro Core - ${company.name}`;
+      const resolved = await reconcileAttendanceEmployees({
+        company, userId, supabase, dailyPayloads, employees: companyEmployees,
+      });
 
       stage = `normalização previsto x realizado - ${company.name}`;
       const rows = dailyPayloads.flatMap(({ day, attendance }) => normalizeAttendanceDay({
         day,
         attendance,
-        employees: companyEmployees,
+        employees: resolved.employees,
+        directory: resolved.directory,
         allocations: companyAllocations,
         settings,
         companyId: company.id,
@@ -241,7 +341,8 @@ export default async function handler(req, res) {
         companyKey: company.key,
         companyName: company.name,
         recordsProcessed: rows.length,
-        employeesAvailable: companyEmployees.length,
+        employeesAvailable: resolved.employees.length,
+        employeesRecoveredFromCore: resolved.recovered,
         schedulesAvailable: companyAllocations.length,
       });
     }
