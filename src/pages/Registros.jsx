@@ -25,6 +25,7 @@ import {
   fetchFilterOptions,
   importAttendanceFromFlash,
   loadAttendanceSettings,
+  NO_EVENT_STATUS,
   STATUS_LABELS,
 } from '@/lib/attendanceService';
 import { TimeRecordStatus } from '@/types';
@@ -36,6 +37,7 @@ const STATUS_OPTIONS = [
   TimeRecordStatus.LATE_EXIT,
   TimeRecordStatus.EARLY,
   TimeRecordStatus.ADJUSTED,
+  NO_EVENT_STATUS,
 ];
 
 const CARD = 'rounded-2xl border border-[#dfe9d7] bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900';
@@ -200,6 +202,18 @@ const Registros = () => {
     setFilters((old) => ({ ...old, startDate, endDate }));
   };
 
+  const handleSyncMonthChange = (event) => {
+    const month = event.target.value;
+    setSyncMonth(month);
+    if (!month) return;
+    const range = monthRange(month);
+    setFilters((old) => ({
+      ...old,
+      startDate: range.startDate,
+      endDate: range.endDate,
+    }));
+  };
+
   const handleImport = async () => {
     setImporting(true);
     try {
@@ -292,7 +306,7 @@ const Registros = () => {
               type="month"
               value={syncMonth}
               max={currentMonth}
-              onChange={(event) => setSyncMonth(event.target.value)}
+              onChange={handleSyncMonthChange}
               className={FIELD}
               style={{ width: 190 }}
               aria-label="Mês da atualização da API"
