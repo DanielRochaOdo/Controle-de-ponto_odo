@@ -87,14 +87,25 @@ export default async function handler(req, res) {
       }
     }
 
-    const { data, error } = await supabase
-      .from('flash_structure_sync_settings')
-      .update({ is_enabled: enabled, is_running: false, running_started_at: null, updated_at: new Date().toISOString() })
-      .eq('id', 1)
-      .or(`is_running.eq.false,running_started_at.lt.${new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()}`)
-      .select('is_enabled,is_running,last_updated_at,running_started_at')
-      .maybeSingle();
+    const staleRunBefore = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    const updateSettings = (staleRun = false) => {
+      let query = supabase
+        .from('flash_structure_sync_settings')
+        .update({ is_enabled: enabled, is_running: false, running_started_at: null, updated_at: new Date().toISOString() })
+        .eq('id', 1);
+      query = staleRun
+        ? query.eq('is_running', true).lt('running_started_at', staleRunBefore)
+        : query.eq('is_running', false);
+      return query.select('is_enabled,is_running,last_updated_at,running_started_at').maybeSingle();
+    };
+
+    let { data, error } = await updateSettings();
     if (error) throw error;
+    if (!data) {
+      const staleUpdate = await updateSettings(true);
+      if (staleUpdate.error) throw staleUpdate.error;
+      data = staleUpdate.data;
+    }
     if (!data) return res.status(409).json({ error: 'Aguarde a sincronização em andamento terminar para alterar essa configuração.' });
     const status = {
       is_enabled: data.is_enabled,

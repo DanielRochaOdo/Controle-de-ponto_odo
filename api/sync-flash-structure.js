@@ -644,15 +644,27 @@ export default async function handler(req, res) {
     }
 
     stage = 'controle da sincronização automática';
-    const { data: claim, error: claimError } = await supabase
-      .from('flash_structure_sync_settings')
-      .update({ is_running: true, running_started_at: new Date().toISOString() })
-      .eq('id', 1)
-      .eq('is_enabled', false)
-      .or(`is_running.eq.false,running_started_at.lt.${new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()}`)
-      .select('id')
-      .maybeSingle();
+    const runningStartedAt = new Date().toISOString();
+    const staleRunBefore = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    const claimLock = (staleLock = false) => {
+      let query = supabase
+        .from('flash_structure_sync_settings')
+        .update({ is_running: true, running_started_at: runningStartedAt })
+        .eq('id', 1)
+        .eq('is_enabled', false);
+      query = staleLock
+        ? query.eq('is_running', true).lt('running_started_at', staleRunBefore)
+        : query.eq('is_running', false);
+      return query.select('id').maybeSingle();
+    };
+
+    let { data: claim, error: claimError } = await claimLock();
     if (claimError) throw claimError;
+    if (!claim) {
+      const staleClaim = await claimLock(true);
+      if (staleClaim.error) throw staleClaim.error;
+      claim = staleClaim.data;
+    }
     if (!claim) return res.status(409).json({ error: 'A sincronização automática está ativa ou outra sincronização já está em andamento.' });
 
     runId = crypto.randomUUID();

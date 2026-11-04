@@ -41,15 +41,27 @@ async function main() {
     return;
   }
 
-  const { data: claim, error: claimError } = await supabase
-    .from('flash_structure_sync_settings')
-    .update({ is_running: true, running_started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', 1)
-    .eq('is_enabled', true)
-    .or(`is_running.eq.false,running_started_at.lt.${new Date(Date.now() - LOCK_TIMEOUT_MS).toISOString()}`)
-    .select('id')
-    .maybeSingle();
+  const runningStartedAt = new Date().toISOString();
+  const staleRunBefore = new Date(Date.now() - LOCK_TIMEOUT_MS).toISOString();
+  const claimLock = (staleLock = false) => {
+    let query = supabase
+      .from('flash_structure_sync_settings')
+      .update({ is_running: true, running_started_at: runningStartedAt, updated_at: runningStartedAt })
+      .eq('id', 1)
+      .eq('is_enabled', true);
+    query = staleLock
+      ? query.eq('is_running', true).lt('running_started_at', staleRunBefore)
+      : query.eq('is_running', false);
+    return query.select('id').maybeSingle();
+  };
+
+  let { data: claim, error: claimError } = await claimLock();
   if (claimError) throw claimError;
+  if (!claim) {
+    const staleClaim = await claimLock(true);
+    if (staleClaim.error) throw staleClaim.error;
+    claim = staleClaim.data;
+  }
   if (!claim) {
     console.log('Outra sincronização está em andamento; execução ignorada.');
     return;
