@@ -53,7 +53,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const { data, error } = await supabase
         .from('flash_structure_sync_settings')
-        .select('is_enabled,is_running,last_updated_at,running_started_at')
+        .select('is_enabled,is_running,last_updated_at,running_started_at,progress_company_name,progress_target,progress_current,progress_total,progress_unit')
         .eq('id', 1)
         .single();
       if (error) throw error;
@@ -72,6 +72,11 @@ export default async function handler(req, res) {
         is_enabled: data.is_enabled,
         is_running: data.is_running,
         last_updated_at: data.last_updated_at,
+        progress_company_name: data.progress_company_name,
+        progress_target: data.progress_target,
+        progress_current: data.progress_current,
+        progress_total: data.progress_total,
+        progress_unit: data.progress_unit,
       };
       return res.status(200).json(status);
     }

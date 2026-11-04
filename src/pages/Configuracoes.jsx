@@ -54,6 +54,12 @@ const TARGET_UI = {
 
 const syncKey = (companyKey, target) => `${companyKey}:${target}`;
 
+const AUTO_SYNC_TARGET_LABELS = {
+  employees: 'Funcionários',
+  departments: 'Departamentos',
+  schedules: 'Horários',
+};
+
 const isRecentRunning = (run) => {
   if (run?.status !== 'running') return false;
   const value = run.progress_updated_at || run.started_at;
@@ -211,12 +217,12 @@ const Configuracoes = () => {
     };
 
     refreshAutoSync(true);
-    const timer = window.setInterval(() => refreshAutoSync(), 30000);
+    const timer = window.setInterval(() => refreshAutoSync(), autoSync.is_running ? 3000 : 30000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [user, toast]);
+  }, [user, toast, autoSync.is_running]);
 
   useEffect(() => {
     if (!user || !activeSync) return undefined;
@@ -453,6 +459,34 @@ const Configuracoes = () => {
                   <strong>{autoSync.is_enabled ? 'Ativa:' : 'Ao ativar:'}</strong> sincronização geral automática de segunda a sexta, às 07h (horário de Fortaleza). {autoSync.is_enabled ? 'Enquanto estiver ativa, não faça sincronizações manuais seletivas.' : 'Enquanto estiver ativa, não será possível executar sincronizações manuais seletivas.'}
                 </p>
               </div>
+
+              {autoSync.is_running && autoSync.progress_company_name && (
+                <div className="mt-4 rounded-xl border border-[#cfe8bf] bg-white/80 px-4 py-3 dark:border-emerald-900/60 dark:bg-slate-950/60">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+                    <span className="font-semibold text-[#173c2c] dark:text-slate-100">
+                      {autoSync.progress_company_name.toLocaleUpperCase('pt-BR')} | {AUTO_SYNC_TARGET_LABELS[autoSync.progress_target] || autoSync.progress_target}
+                    </span>
+                    {Number.isFinite(Number(autoSync.progress_total)) && autoSync.progress_unit && (
+                      <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                        {Math.min(Number(autoSync.progress_current) || 0, Number(autoSync.progress_total))} de {autoSync.progress_total} {autoSync.progress_unit}
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className="mt-2 h-2 overflow-hidden rounded-full bg-[#e4efdc] dark:bg-slate-800"
+                    role="progressbar"
+                    aria-label="Progresso da sincronização automática"
+                    aria-valuemin={0}
+                    aria-valuemax={Number(autoSync.progress_total) || 0}
+                    aria-valuenow={Math.min(Number(autoSync.progress_current) || 0, Number(autoSync.progress_total) || 0)}
+                  >
+                    <div
+                      className="h-full rounded-full bg-[#18b44a] transition-[width] duration-500"
+                      style={{ width: `${Number(autoSync.progress_total) > 0 ? Math.min(100, Math.round((Number(autoSync.progress_current || 0) / Number(autoSync.progress_total)) * 100)) : 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </section>
 
             <div className="mt-5 space-y-4">

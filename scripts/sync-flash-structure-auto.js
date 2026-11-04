@@ -46,7 +46,7 @@ async function main() {
   const claimLock = (staleLock = false) => {
     let query = supabase
       .from('flash_structure_sync_settings')
-      .update({ is_running: true, running_started_at: runningStartedAt, updated_at: runningStartedAt })
+      .update({ is_running: true, running_started_at: runningStartedAt, progress_company_name: null, progress_target: null, progress_current: null, progress_total: null, progress_unit: null, updated_at: runningStartedAt })
       .eq('id', 1)
       .eq('is_enabled', true);
     query = staleLock
@@ -88,21 +88,55 @@ async function main() {
     console.log(`Sincronizando ${companies.length} empresas, em sequência.`);
     for (const company of companies) {
       for (const target of TARGETS) {
-        await syncFlashStructureTarget({ supabase, userId: admin.user_id, company, target });
+        const { error: progressError } = await supabase
+          .from('flash_structure_sync_settings')
+          .update({
+            progress_company_name: company.name,
+            progress_target: target,
+            progress_current: 0,
+            progress_total: 0,
+            progress_unit: target === 'departments' ? 'departamentos' : 'funcionários',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', 1)
+          .eq('is_running', true);
+        if (progressError) throw progressError;
+
+        await syncFlashStructureTarget({
+          supabase,
+          userId: admin.user_id,
+          company,
+          target,
+          onProgress: async ({ target: progressTarget, current, total, unit }) => {
+            const { error } = await supabase
+              .from('flash_structure_sync_settings')
+              .update({
+                progress_company_name: company.name,
+                progress_target: progressTarget,
+                progress_current: current,
+                progress_total: total,
+                progress_unit: unit,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', 1)
+              .eq('is_running', true);
+            if (error) throw error;
+          },
+        });
       }
     }
 
     const finishedAt = new Date().toISOString();
     const { error: finishError } = await supabase
       .from('flash_structure_sync_settings')
-      .update({ is_running: false, running_started_at: null, last_updated_at: finishedAt, updated_at: finishedAt })
+      .update({ is_running: false, running_started_at: null, progress_company_name: null, progress_target: null, progress_current: null, progress_total: null, progress_unit: null, last_updated_at: finishedAt, updated_at: finishedAt })
       .eq('id', 1);
     if (finishError) throw finishError;
     console.log(`Sincronização geral concluída em ${new Intl.DateTimeFormat('pt-BR', { timeZone: TIME_ZONE, dateStyle: 'short', timeStyle: 'short' }).format(new Date(finishedAt))}.`);
   } catch (error) {
     await supabase
       .from('flash_structure_sync_settings')
-      .update({ is_running: false, running_started_at: null, updated_at: new Date().toISOString() })
+      .update({ is_running: false, running_started_at: null, progress_company_name: null, progress_target: null, progress_current: null, progress_total: null, progress_unit: null, updated_at: new Date().toISOString() })
       .eq('id', 1);
     throw error;
   }

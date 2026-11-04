@@ -366,7 +366,7 @@ async function loadScheduleAllocations(company, employees, windows, onProgress) 
   };
 }
 
-async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
+async function syncEmployees({ supabase, userId, company, runId, syncedAt, onProgress }) {
   await updateRun(supabase, runId, { current_stage: 'Consultando funcionários na Flash' });
 
   const [employees, departmentsById] = await Promise.all([
@@ -403,6 +403,8 @@ async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
       };
     });
 
+  await onProgress?.({ target: 'employees', current: 0, total: rows.length, unit: 'funcionários' });
+
   await updateRun(supabase, runId, {
     current_stage: departmentsById.size
       ? `Gravando funcionários (${employeesWithDepartmentName}/${rows.length} com nome de departamento resolvido)`
@@ -412,6 +414,7 @@ async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
   });
 
   await upsertChunks(supabase, 'flash_employees', rows, 'user_id,flash_company_id,flash_employee_id');
+  await onProgress?.({ target: 'employees', current: rows.length, total: rows.length, unit: 'funcionários' });
   await cleanupStaleRows(supabase, 'flash_employees', userId, company.id, syncedAt);
 
   let backfilled = 0;
@@ -444,7 +447,7 @@ async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
   };
 }
 
-async function syncDepartments({ supabase, userId, company, runId, syncedAt }) {
+async function syncDepartments({ supabase, userId, company, runId, syncedAt, onProgress }) {
   await updateRun(supabase, runId, { current_stage: 'Consultando departamentos na Flash' });
   const departments = await listDepartments(company.id);
   const common = companyFields(company);
@@ -463,8 +466,11 @@ async function syncDepartments({ supabase, userId, company, runId, syncedAt }) {
       synced_at: syncedAt,
     }));
 
+  await onProgress?.({ target: 'departments', current: 0, total: rows.length, unit: 'departamentos' });
+
   await updateRun(supabase, runId, { current_stage: `Gravando ${rows.length} departamentos no Supabase` });
   await upsertChunks(supabase, 'flash_departments', rows, 'user_id,flash_company_id,flash_department_id');
+  await onProgress?.({ target: 'departments', current: rows.length, total: rows.length, unit: 'departamentos' });
   await cleanupStaleRows(supabase, 'flash_departments', userId, company.id, syncedAt);
 
   const departmentsById = new Map(rows.map((department) => [department.flash_department_id, department.name]));
@@ -484,7 +490,7 @@ async function syncDepartments({ supabase, userId, company, runId, syncedAt }) {
   };
 }
 
-async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
+async function syncSchedules({ supabase, userId, company, runId, syncedAt, onProgress }) {
   const { data: employees, error: employeesError } = await supabase
     .from('flash_employees')
     .select('flash_employee_id,external_id,employee_name')
@@ -508,6 +514,8 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
     months: windows.length,
   };
 
+  await onProgress?.({ target: 'schedules', current: 0, total: employees.length, unit: 'funcionários' });
+
   await updateRun(supabase, runId, {
     current_stage: `Consultando horários mês a mês desde jan/2026 (${windows.length} competências)`,
     current_company_employees_total: employees.length,
@@ -525,6 +533,7 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
     employees,
     windows,
     async ({ processed, total, allocationsFound, warnings: warningCount }) => {
+      await onProgress?.({ target: 'schedules', current: processed, total, unit: 'funcionários' });
       await updateRun(supabase, runId, {
         current_stage: `Consultando horários mês a mês desde jan/2026 (${windows.length} competências)`,
         current_company_employees_total: total,
@@ -591,11 +600,11 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
   };
 }
 
-export async function syncFlashStructureTarget({ supabase, userId, company, target, runId = null }) {
+export async function syncFlashStructureTarget({ supabase, userId, company, target, runId = null, onProgress }) {
   const syncedAt = new Date().toISOString();
-  if (target === 'employees') return syncEmployees({ supabase, userId, company, runId, syncedAt });
-  if (target === 'departments') return syncDepartments({ supabase, userId, company, runId, syncedAt });
-  if (target === 'schedules') return syncSchedules({ supabase, userId, company, runId, syncedAt });
+  if (target === 'employees') return syncEmployees({ supabase, userId, company, runId, syncedAt, onProgress });
+  if (target === 'departments') return syncDepartments({ supabase, userId, company, runId, syncedAt, onProgress });
+  if (target === 'schedules') return syncSchedules({ supabase, userId, company, runId, syncedAt, onProgress });
   throw new Error('Tipo de sincronização inválido.');
 }
 
