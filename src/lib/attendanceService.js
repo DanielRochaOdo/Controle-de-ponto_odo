@@ -270,6 +270,31 @@ async function authenticatedApiPost(path, body = {}) {
   return payload;
 }
 
+async function authenticatedApiRequest(path, method, body) {
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !session?.access_token) throw new Error('Sessão expirada. Entre novamente no sistema.');
+
+  const response = await fetch(path, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Falha ao acessar a configuração da sincronização automática.');
+  return payload;
+}
+
+export async function fetchFlashStructureAutoSyncSettings() {
+  return authenticatedApiRequest('/api/flash-structure-auto-settings', 'GET');
+}
+
+export async function updateFlashStructureAutoSync(enabled) {
+  return authenticatedApiRequest('/api/flash-structure-auto-settings', 'POST', { enabled });
+}
+
 export async function syncFlashStructure(companyKey, target) {
   return authenticatedApiPost('/api/sync-flash-structure', { companyKey, target });
 }

@@ -7,12 +7,14 @@ import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import {
   DEFAULT_SETTINGS,
+  fetchFlashStructureAutoSyncSettings,
   fetchLatestImport,
   fetchStructureSyncRuns,
   loadAttendanceSettings,
   saveAttendanceSettings,
   STATUS_LABELS,
   syncFlashStructure,
+  updateFlashStructureAutoSync,
 } from '@/lib/attendanceService';
 import { FLASH_COMPANY_CATALOG, FLASH_SYNC_TARGETS } from '@/lib/flashCompanyCatalog';
 import { TimeRecordStatus } from '@/types';
@@ -59,7 +61,7 @@ const isRecentRunning = (run) => {
   return Date.now() - new Date(value).getTime() < 10 * 60 * 1000;
 };
 
-const SyncAction = ({ company, target, run, activeSync, onSync, dateTime }) => {
+const SyncAction = ({ company, target, run, activeSync, onSync, dateTime, syncBlocked }) => {
   const meta = TARGET_UI[target];
   const targetMeta = FLASH_SYNC_TARGETS[target];
   const Icon = meta.icon;
@@ -128,7 +130,7 @@ const SyncAction = ({ company, target, run, activeSync, onSync, dateTime }) => {
 
       <button
         onClick={() => onSync(company, target)}
-        disabled={locked || running}
+        disabled={locked || running || syncBlocked}
         className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#beddac] bg-white px-3 text-xs font-semibold text-[#2f8f17] transition hover:border-[#57D100] hover:bg-[#f3fced] disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-emerald-300 dark:hover:bg-slate-800"
       >
         <RefreshCw className={`h-4 w-4 ${running ? 'animate-spin' : ''}`} />
@@ -149,7 +151,7 @@ const TabButton = ({ active, onClick, children }) => (
 );
 
 const Configuracoes = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState(initialConfigTab);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -157,6 +159,9 @@ const Configuracoes = () => {
   const [syncRuns, setSyncRuns] = useState([]);
   const [saving, setSaving] = useState(false);
   const [activeSync, setActiveSync] = useState(null);
+  const [autoSync, setAutoSync] = useState({ is_enabled: false, is_running: false, last_updated_at: null });
+  const [autoSyncLoaded, setAutoSyncLoaded] = useState(false);
+  const [autoSyncSaving, setAutoSyncSaving] = useState(false);
 
   const loadSyncRuns = async () => {
     if (!user) return [];
@@ -185,6 +190,33 @@ const Configuracoes = () => {
       })
       .catch((error) => toast({ title: 'Erro ao carregar configurações', description: error.message, variant: 'destructive' }));
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    let cancelled = false;
+
+    const refreshAutoSync = async (showError = false) => {
+      try {
+        const status = await fetchFlashStructureAutoSyncSettings();
+        if (!cancelled) {
+          setAutoSync(status);
+          setAutoSyncLoaded(true);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAutoSyncLoaded(true);
+          if (showError) toast({ title: 'Erro ao carregar sincronização automática', description: error.message, variant: 'destructive' });
+        }
+      }
+    };
+
+    refreshAutoSync(true);
+    const timer = window.setInterval(() => refreshAutoSync(), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [user, toast]);
 
   useEffect(() => {
     if (!user || !activeSync) return undefined;
@@ -250,7 +282,7 @@ const Configuracoes = () => {
   };
 
   const handleSync = async (company, target) => {
-    if (!user || activeSync) return;
+    if (!user || activeSync || autoSync.is_enabled || autoSync.is_running) return;
     setActiveSync({ companyKey: company.key, target });
     try {
       const result = await syncFlashStructure(company.key, target);
@@ -276,6 +308,31 @@ const Configuracoes = () => {
   };
 
   const dateTime = (value) => value ? new Date(value).toLocaleString('pt-BR') : 'Ainda não disponível';
+
+  const autoSyncDateTime = (value) => value
+    ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Fortaleza', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
+    : 'Ainda não realizada';
+
+  const toggleAutoSync = async () => {
+    if (autoSyncSaving || autoSync.is_running || profile?.role !== 'admin') return;
+    setAutoSyncSaving(true);
+    try {
+      const updated = await updateFlashStructureAutoSync(!autoSync.is_enabled);
+      setAutoSync(updated);
+      toast({
+        title: updated.is_enabled ? 'Sincronização automática ativada' : 'Sincronização automática desativada',
+        description: updated.is_enabled
+          ? 'A sincronização geral será executada de segunda a sexta às 07h.'
+          : 'As sincronizações seletivas estão liberadas.',
+      });
+    } catch (error) {
+      toast({ title: 'Não foi possível alterar a sincronização automática', description: error.message, variant: 'destructive' });
+    } finally {
+      setAutoSyncSaving(false);
+    }
+  };
+
+  const syncBlocked = !autoSyncLoaded || autoSync.is_enabled || autoSync.is_running;
 
   return (
     <>
@@ -366,31 +423,35 @@ const Configuracoes = () => {
 
         {activeTab === 'flash' && (
           <div className="mt-5">
-            <section className="rounded-2xl border border-[#cfe8bf] bg-[linear-gradient(110deg,#f3fced_0%,#ffffff_70%,#f4fbef_100%)] p-6 shadow-sm dark:border-emerald-900/60 dark:bg-none dark:bg-emerald-950/20">
-              <div className="flex items-start gap-4">
-                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#e7f7dc] text-[#2f8f17] dark:bg-emerald-950 dark:text-emerald-300"><RefreshCw className="h-6 w-6" /></span>
-                <div className="w-full min-w-0">
-                  <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Sincronização por empresa</h2>
-                  <p className="mt-1 max-w-4xl text-sm leading-6 text-[#63796b] dark:text-slate-300">Atualize somente o recurso que realmente mudou para reduzir chamadas à Flash e manter a estrutura de cada empresa atualizada.</p>
-
-                  <div className="mt-4 rounded-xl border border-[#d8ebcd] bg-white/80 px-4 py-3 dark:border-emerald-900/60 dark:bg-slate-950/70">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#2f8f17] dark:text-emerald-300">Ordem recomendada na carga inicial</p>
-                    <div className="mt-2 flex items-center gap-2 overflow-x-auto whitespace-nowrap pb-1 text-sm font-medium text-[#294436]">
-                      <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1 text-[#294436] dark:bg-emerald-950 dark:text-emerald-200">1. Funcionários</span>
-                      <span className="text-slate-400 dark:text-slate-500">→</span>
-                      <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1 text-[#294436] dark:bg-emerald-950 dark:text-emerald-200">2. Departamentos</span>
-                      <span className="text-slate-400 dark:text-slate-500">→</span>
-                      <span className="rounded-lg bg-[#eef9e7] px-2.5 py-1 text-[#294436] dark:bg-emerald-950 dark:text-emerald-200">3. Horários</span>
-                    </div>
-                    <p className="mt-2 max-w-4xl text-xs leading-5 text-slate-500 dark:text-slate-300">Funcionários grava os IDs de departamento recebidos da Flash. Departamentos resolve esses IDs para nomes e atualiza os vínculos. Depois da carga inicial, sincronize somente o recurso que mudou.</p>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full bg-white px-3 py-1.5 font-medium text-[#2f8f17] shadow-sm dark:bg-slate-900 dark:text-emerald-300">{FLASH_COMPANY_CATALOG.length} empresas</span>
-                    <span className="rounded-full bg-white px-3 py-1.5 text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">3 etapas por empresa</span>
-                    <span className="rounded-full bg-white px-3 py-1.5 text-slate-500 shadow-sm dark:bg-slate-900 dark:text-slate-400">Atualização seletiva após a carga inicial</span>
-                  </div>
+            <section className="rounded-2xl border border-[#cfe8bf] bg-[linear-gradient(110deg,#f3fced_0%,#ffffff_70%,#f4fbef_100%)] p-5 shadow-sm dark:border-emerald-900/60 dark:bg-none dark:bg-emerald-950/20">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <h2 className="text-xl font-semibold text-[#173c2c] dark:text-slate-100">Sincronização por empresa</h2>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 xl:justify-end">
+                  <span className="text-sm text-slate-700 dark:text-slate-300">Sincronização automática</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoSync.is_enabled}
+                    aria-label="Sincronização automática"
+                    onClick={toggleAutoSync}
+                    disabled={!autoSyncLoaded || autoSyncSaving || autoSync.is_running || profile?.role !== 'admin'}
+                    className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition disabled:cursor-not-allowed disabled:opacity-60 ${autoSync.is_enabled ? 'bg-[#18b44a]' : 'bg-slate-300 dark:bg-slate-700'}`}
+                  >
+                    <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${autoSync.is_enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </button>
+                  <span className={`text-sm font-semibold ${autoSync.is_enabled ? 'text-[#2f8f17] dark:text-emerald-300' : 'text-slate-500 dark:text-slate-400'}`}>
+                    {autoSyncSaving ? 'Salvando...' : autoSync.is_running ? 'Sincronizando...' : autoSync.is_enabled ? 'Ativa' : 'Inativa'}
+                  </span>
+                  <span className="hidden h-6 w-px bg-slate-300 dark:bg-slate-700 sm:block" />
+                  <span className="text-xs text-slate-600 dark:text-slate-300">Última atualização: {autoSyncDateTime(autoSync.last_updated_at)}</span>
                 </div>
+              </div>
+
+              <div className="mt-5 flex items-start gap-3 rounded-xl border border-[#d8ebcd] bg-[#e7f8e7] px-4 py-4 text-sm leading-6 text-[#294436] dark:border-emerald-900/60 dark:bg-emerald-950/50 dark:text-emerald-100">
+                <Clock3 className="mt-0.5 h-6 w-6 shrink-0 text-[#168638] dark:text-emerald-300" />
+                <p>
+                  <strong>{autoSync.is_enabled ? 'Ativa:' : 'Ao ativar:'}</strong> sincronização geral automática de segunda a sexta, às 07h (horário de Fortaleza). {autoSync.is_enabled ? 'Enquanto estiver ativa, não faça sincronizações manuais seletivas.' : 'Enquanto estiver ativa, não será possível executar sincronizações manuais seletivas.'}
+                </p>
               </div>
             </section>
 
@@ -418,6 +479,7 @@ const Configuracoes = () => {
                         activeSync={activeSync}
                         onSync={handleSync}
                         dateTime={dateTime}
+                        syncBlocked={syncBlocked}
                       />
                     ))}
                   </div>

@@ -1,0 +1,48 @@
+name: Sincronização automática da Estrutura Flash
+
+on:
+  schedule:
+    - cron: '0 7 * * 1-5'
+      timezone: America/Fortaleza
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flash-structure-auto-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sincronizar empresas Flash
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Baixar o repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Sincronizar toda a estrutura
+        run: node scripts/sync-flash-structure-auto.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FLASH_API_KEY: ${{ secrets.FLASH_API_KEY }}
+          FLASH_COMPANY_ID_CLINICA_NEW_ODONTO: ${{ secrets.FLASH_COMPANY_ID_CLINICA_NEW_ODONTO }}
+          FLASH_COMPANY_ID_CLINICA_NEW_ODONTO_AGUANAMBI: ${{ secrets.FLASH_COMPANY_ID_CLINICA_NEW_ODONTO_AGUANAMBI }}
+          FLASH_COMPANY_ID_CLINICA_NEW_ODONTO_BEZERRA: ${{ secrets.FLASH_COMPANY_ID_CLINICA_NEW_ODONTO_BEZERRA }}
+          FLASH_COMPANY_ID_CLINICA_NEW_ODONTO_SOBRAL: ${{ secrets.FLASH_COMPANY_ID_CLINICA_NEW_ODONTO_SOBRAL }}
+          FLASH_COMPANY_ID_NEW_ODONTOLOGIA: ${{ secrets.FLASH_COMPANY_ID_NEW_ODONTOLOGIA }}
+          FLASH_COMPANY_ID_NEW_RT: ${{ secrets.FLASH_COMPANY_ID_NEW_RT }}
+          FLASH_COMPANY_ID_ODONTOART: ${{ secrets.FLASH_COMPANY_ID_ODONTOART }}
+          FLASH_COMPANY_ID: ${{ secrets.FLASH_COMPANY_ID }}
+          FLASH_COMPANY_ID_RT_SERVICOS: ${{ secrets.FLASH_COMPANY_ID_RT_SERVICOS }}
+          FLASH_COMPANY_ID_RT_SERVICOS_FILIAL: ${{ secrets.FLASH_COMPANY_ID_RT_SERVICOS_FILIAL }}

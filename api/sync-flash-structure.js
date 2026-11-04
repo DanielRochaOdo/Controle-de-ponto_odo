@@ -143,6 +143,7 @@ async function upsertChunks(supabase, table, rows, onConflict, size = 500) {
 }
 
 async function updateRun(supabase, runId, values) {
+  if (!runId) return;
   const { error } = await supabase
     .from('flash_structure_sync_runs')
     .update({ ...values, progress_updated_at: new Date().toISOString() })
@@ -590,6 +591,14 @@ async function syncSchedules({ supabase, userId, company, runId, syncedAt }) {
   };
 }
 
+export async function syncFlashStructureTarget({ supabase, userId, company, target, runId = null }) {
+  const syncedAt = new Date().toISOString();
+  if (target === 'employees') return syncEmployees({ supabase, userId, company, runId, syncedAt });
+  if (target === 'departments') return syncDepartments({ supabase, userId, company, runId, syncedAt });
+  if (target === 'schedules') return syncSchedules({ supabase, userId, company, runId, syncedAt });
+  throw new Error('Tipo de sincronização inválido.');
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido.' });
 
@@ -634,6 +643,18 @@ export default async function handler(req, res) {
       return res.status(403).json({ stage, error: 'Acesso restrito a administradores.' });
     }
 
+    stage = 'controle da sincronização automática';
+    const { data: claim, error: claimError } = await supabase
+      .from('flash_structure_sync_settings')
+      .update({ is_running: true, running_started_at: new Date().toISOString() })
+      .eq('id', 1)
+      .eq('is_enabled', false)
+      .or(`is_running.eq.false,running_started_at.lt.${new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()}`)
+      .select('id')
+      .maybeSingle();
+    if (claimError) throw claimError;
+    if (!claim) return res.status(409).json({ error: 'A sincronização automática está ativa ou outra sincronização já está em andamento.' });
+
     runId = crypto.randomUUID();
     const startedAt = new Date().toISOString();
     stage = 'criação do histórico de sincronização';
@@ -658,13 +679,9 @@ export default async function handler(req, res) {
     });
     if (runError) throw runError;
 
-    const syncedAt = new Date().toISOString();
     stage = `${target} - ${company.name}`;
 
-    let result;
-    if (target === 'employees') result = await syncEmployees({ supabase, userId, company, runId, syncedAt });
-    if (target === 'departments') result = await syncDepartments({ supabase, userId, company, runId, syncedAt });
-    if (target === 'schedules') result = await syncSchedules({ supabase, userId, company, runId, syncedAt });
+    const result = await syncFlashStructureTarget({ supabase, userId, company, target, runId });
 
     const finishedAt = new Date().toISOString();
     const firstWarning = result.warnings?.[0] || null;
@@ -688,6 +705,8 @@ export default async function handler(req, res) {
       finished_at: finishedAt,
     }).eq('id', runId);
     if (finishError) throw finishError;
+
+    await supabase.from('flash_structure_sync_settings').update({ is_running: false, running_started_at: null }).eq('id', 1);
 
     return res.status(200).json({
       success: true,
@@ -719,6 +738,10 @@ export default async function handler(req, res) {
         finished_at: finishedAt,
         error_message: `[${stage}] ${String(error?.message || error)}`.slice(0, 1000),
       }).eq('id', runId);
+    }
+
+    if (supabase) {
+      await supabase.from('flash_structure_sync_settings').update({ is_running: false, running_started_at: null }).eq('id', 1);
     }
 
     return res.status(error?.statusCode || 500).json({

@@ -4,6 +4,7 @@ import { defineConfig, loadEnv } from 'vite';
 import adminUsersHandler from './api/admin-users.js';
 import importAttendanceHandler from './api/import-attendance.js';
 import importEventsHandler from './api/import-events.js';
+import flashStructureAutoSettingsHandler from './api/flash-structure-auto-settings.js';
 import syncFlashStructureHandler from './api/sync-flash-structure.js';
 
 const readJsonBody = (req) => new Promise((resolve, reject) => {
@@ -75,6 +76,7 @@ const localApiPlugin = () => ({
     registerLocalApi(server, '/api/admin-users', adminUsersHandler);
     registerLocalApi(server, '/api/import-attendance', importAttendanceHandler);
     registerLocalApi(server, '/api/import-events', importEventsHandler);
+    registerLocalApi(server, '/api/flash-structure-auto-settings', flashStructureAutoSettingsHandler);
     registerLocalApi(server, '/api/sync-flash-structure', syncFlashStructureHandler);
   },
 });
