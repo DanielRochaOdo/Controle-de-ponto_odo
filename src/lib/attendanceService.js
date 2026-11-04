@@ -3,12 +3,15 @@ import { supabase } from '@/lib/customSupabaseClient';
 import { FLASH_COMPANY_CATALOG } from '@/lib/flashCompanyCatalog';
 import { StatusColors, TimeRecordStatus } from '@/types';
 
+export const NO_EVENT_STATUS = 'no_event';
+
 export const STATUS_LABELS = {
   [TimeRecordStatus.ON_TIME]: 'No horário',
   [TimeRecordStatus.LATE]: 'Atraso',
   [TimeRecordStatus.LATE_EXIT]: 'Saída após horário',
   [TimeRecordStatus.EARLY]: 'Antecipado',
   [TimeRecordStatus.ADJUSTED]: 'Ajustado',
+  [NO_EVENT_STATUS]: 'Sem evento registrado',
 };
 
 const DEFAULT_STATUS_TOLERANCES = {
@@ -168,9 +171,17 @@ export async function fetchFilterOptions(userId) {
     ? [...(data?.companies || []), ...FLASH_COMPANY_CATALOG.map((company) => company.name)]
     : (data?.companies || []);
 
+  const employeesByCompany = Object.fromEntries(
+    Object.entries(data?.employeesByCompany || {}).map(([companyName, employees]) => [
+      companyName,
+      uniqueSorted(employees),
+    ]),
+  );
+
   return {
     companies: uniqueSorted(companies),
     employees: uniqueSorted(data?.employees || []),
+    employeesByCompany,
     departments: uniqueSorted(data?.departments || []),
   };
 }

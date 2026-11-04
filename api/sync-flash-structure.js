@@ -378,9 +378,9 @@ async function syncEmployees({ supabase, userId, company, runId, syncedAt }) {
   let employeesWithDepartmentId = 0;
   let employeesWithDepartmentName = 0;
 
-  const rows = employees
-    .filter((employee) => employee?.id && employee?.name)
-    .map((employee) => {
+  // listEmployees valida todos os cadastros do Core; omitir um funcionário
+  // silenciosamente produziria "Colaborador <id>" na importação de ponto.
+  const rows = employees.map((employee) => {
       const department = firstDepartmentFromEmployee(employee, departmentsById, company.id);
       if (department.id) {
         employeesWithDepartmentId += 1;
