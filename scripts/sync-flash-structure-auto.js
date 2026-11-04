@@ -88,6 +88,7 @@ async function main() {
     console.log(`Sincronizando ${companies.length} empresas, em sequência.`);
     for (const company of companies) {
       for (const target of TARGETS) {
+        console.log(`Sincronizando empresa ${company.name}, etapa ${target}.`);
         const { error: progressError } = await supabase
           .from('flash_structure_sync_settings')
           .update({

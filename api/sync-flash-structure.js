@@ -5,6 +5,7 @@ import {
   listEmployees,
   listTimetableAllocations,
   parseTimetableName,
+  flashGet,
 } from './_lib/flash.js';
 import { getFlashCompanies } from './_lib/flashCompanies.js';
 
@@ -196,30 +197,12 @@ async function backfillEmployeeDepartments(supabase, userId, companyId, departme
 }
 
 async function listTimetableAllocationsByExternalId(companyId, startDate, endDate, externalId) {
-  const apiKey = process.env.FLASH_API_KEY;
-  if (!apiKey) throw new Error('FLASH_API_KEY não configurada.');
-
-  const url = new URL('timetables/allocations', FLASH_ATTENDANCE_BASE_URL);
-  url.searchParams.set('companyId', String(companyId));
-  url.searchParams.set('startDate', `${startDate}T00:00:00.000Z`);
-  url.searchParams.set('endDate', `${endDate}T23:59:59.999Z`);
-  url.searchParams.set('externalId', String(externalId));
-
-  const response = await fetch(url, {
-    headers: {
-      'x-flash-auth': apiKey,
-      Accept: 'application/json',
-    },
+  const payload = await flashGet(FLASH_ATTENDANCE_BASE_URL, 'timetables/allocations', {
+    companyId,
+    startDate: `${startDate}T00:00:00.000Z`,
+    endDate: `${endDate}T23:59:59.999Z`,
+    externalId,
   });
-  const payload = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    const error = new Error(payload?.message || `Flash API respondeu ${response.status}`);
-    error.status = response.status;
-    error.endpoint = `${url.origin}${url.pathname}`;
-    error.requestId = payload?.request_id || payload?.requestId || null;
-    throw error;
-  }
 
   return Array.isArray(payload?.data) ? payload.data : [];
 }

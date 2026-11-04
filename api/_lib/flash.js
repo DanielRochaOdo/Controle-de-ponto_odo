@@ -27,7 +27,7 @@ async function parseFlashJson(response, url) {
   }
 }
 
-async function flashGet(baseUrl, path, query = {}) {
+export async function flashGet(baseUrl, path, query = {}) {
   const apiKey = process.env.FLASH_API_KEY;
   if (!apiKey) throw new Error('FLASH_API_KEY não configurada.');
 
@@ -36,12 +36,31 @@ async function flashGet(baseUrl, path, query = {}) {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
   });
 
-  const response = await fetch(url, {
-    headers: {
-      'x-flash-auth': apiKey,
-      Accept: 'application/json',
-    },
-  });
+  const retryableStatuses = new Set([405, 408, 425, 429, 500, 502, 503, 504]);
+  let response;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      response = await fetch(url, {
+        headers: {
+          'x-flash-auth': apiKey,
+          Accept: 'application/json',
+        },
+      });
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (2 ** attempt)));
+      continue;
+    }
+
+    if (!retryableStatuses.has(response.status) || attempt === 2) break;
+
+    const retryAfter = Number(response.headers.get('retry-after'));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, 10000)
+      : 1000 * (2 ** attempt);
+    await response.body?.cancel();
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
 
   const payload = await parseFlashJson(response, url);
 
