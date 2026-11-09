@@ -78,9 +78,16 @@ const mapSettings = (row) => {
 
 export async function loadAttendanceSettings(userId) {
   if (!userId) return DEFAULT_SETTINGS;
-  const { data, error } = await supabase.from('attendance_settings').select('*').eq('user_id', userId).maybeSingle();
-  if (error) throw error;
-  return mapSettings(data);
+  const [globalResult, personalResult] = await Promise.all([
+    supabase.from('attendance_global_settings').select('status_tolerances').eq('singleton', true).maybeSingle(),
+    supabase.from('attendance_settings').select('*').eq('user_id', userId).maybeSingle(),
+  ]);
+  if (globalResult.error) throw globalResult.error;
+  if (personalResult.error) throw personalResult.error;
+  return mapSettings({
+    ...personalResult.data,
+    status_tolerances: globalResult.data?.status_tolerances || personalResult.data?.status_tolerances,
+  });
 }
 
 export async function saveAttendanceSettings(userId, settings) {
@@ -110,9 +117,14 @@ export async function saveAttendanceSettings(userId, settings) {
   const { data, error } = await supabase.from('attendance_settings').upsert(payload, { onConflict: 'user_id' }).select('*').single();
   if (error) throw error;
 
-  const { error: recalculateError } = await supabase.rpc('recalculate_attendance', { p_user_id: userId });
-  if (recalculateError) throw recalculateError;
-  return mapSettings(data);
+  const { error: globalError } = await supabase.from('attendance_global_settings').upsert({
+    singleton: true,
+    status_tolerances: statusTolerances,
+    updated_by: userId,
+    updated_at: payload.updated_at,
+  }, { onConflict: 'singleton' });
+  if (globalError) throw globalError;
+  return mapSettings({ ...data, status_tolerances: statusTolerances });
 }
 
 function applyFilters(query, userId, filters) {
