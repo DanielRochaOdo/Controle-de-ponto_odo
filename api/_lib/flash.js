@@ -371,10 +371,8 @@ const SPECIAL_WEEKDAY_TAGS = {
   SEXE: { weekday: 5, field: 'entry', offsetSeconds: 3600 },
   SABE: { weekday: 6, field: 'entry', offsetSeconds: 3600 },
 };
-const SPECIAL_WEEKDAY_ADJUSTMENT_EFFECTIVE_DATE = '2026-11-24';
-
 function applySpecialWeekdayAdjustment(scheduleTime, allocation, day, field) {
-  if (!scheduleTime || day < SPECIAL_WEEKDAY_ADJUSTMENT_EFFECTIVE_DATE) return scheduleTime;
+  if (!scheduleTime) return scheduleTime;
 
   const timetableName = String(pick(allocation, [
     'timetable_name',
