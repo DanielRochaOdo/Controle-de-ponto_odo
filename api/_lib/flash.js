@@ -358,6 +358,46 @@ function expectedTimesFromValue(value, allowRecursive = true) {
   return { entry: times[0] || null, exit: times[times.length - 1] || null };
 }
 
+const SPECIAL_WEEKDAY_TAGS = {
+  SEGS: { weekday: 1, field: 'exit', offsetSeconds: -3600 },
+  TERS: { weekday: 2, field: 'exit', offsetSeconds: -3600 },
+  QUAS: { weekday: 3, field: 'exit', offsetSeconds: -3600 },
+  QUIS: { weekday: 4, field: 'exit', offsetSeconds: -3600 },
+  SEXS: { weekday: 5, field: 'exit', offsetSeconds: -3600 },
+  SEGE: { weekday: 1, field: 'entry', offsetSeconds: 3600 },
+  TERE: { weekday: 2, field: 'entry', offsetSeconds: 3600 },
+  QUAE: { weekday: 3, field: 'entry', offsetSeconds: 3600 },
+  QUIE: { weekday: 4, field: 'entry', offsetSeconds: 3600 },
+  SEXE: { weekday: 5, field: 'entry', offsetSeconds: 3600 },
+  SABE: { weekday: 6, field: 'entry', offsetSeconds: 3600 },
+};
+const SPECIAL_WEEKDAY_ADJUSTMENT_EFFECTIVE_DATE = '2026-11-24';
+
+function applySpecialWeekdayAdjustment(scheduleTime, allocation, day, field) {
+  if (!scheduleTime || day < SPECIAL_WEEKDAY_ADJUSTMENT_EFFECTIVE_DATE) return scheduleTime;
+
+  const timetableName = String(pick(allocation, [
+    'timetable_name',
+    'timetableName',
+    'raw_payload.timetableName',
+  ]) || '');
+  const rawTag = timetableName.match(/\((SEGS|TERS|QUAS|QUIS|SEXS|SEGE|TERE|QUAE|QUIE|SEXE|S[ÁA]BE)\)\s*$/i)?.[1];
+  const tag = rawTag?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  const rule = SPECIAL_WEEKDAY_TAGS[tag];
+  if (!rule || rule.field !== field || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return scheduleTime;
+
+  const weekday = new Date(`${day}T00:00:00.000Z`).getUTCDay();
+  if (weekday !== rule.weekday) return scheduleTime;
+
+  const [hour, minute, second = '00'] = scheduleTime.split(':').map(Number);
+  const secondsInDay = 24 * 60 * 60;
+  const adjustedSeconds = (hour * 3600 + minute * 60 + second + rule.offsetSeconds + secondsInDay) % secondsInDay;
+  const adjustedHour = String(Math.floor(adjustedSeconds / 3600)).padStart(2, '0');
+  const adjustedMinute = String(Math.floor((adjustedSeconds % 3600) / 60)).padStart(2, '0');
+  const adjustedSecond = String(adjustedSeconds % 60).padStart(2, '0');
+  return `${adjustedHour}:${adjustedMinute}:${adjustedSecond}`;
+}
+
 function employeeIdentity(value) {
   return {
     id: String(pick(value, ['employeeId', 'flash_employee_id', 'employee.id', 'employee.employeeId', 'collaboratorId', 'personId']) || ''),
@@ -465,8 +505,18 @@ export function normalizeAttendanceDay({ day, attendance, employees, allocations
       });
     }
 
-    const scheduledEntry = attendanceExpected.entry || allocationExpected.entry;
-    const scheduledExit = attendanceExpected.exit || allocationExpected.exit;
+    const scheduledEntry = applySpecialWeekdayAdjustment(
+      attendanceExpected.entry || allocationExpected.entry,
+      allocation,
+      day,
+      'entry',
+    );
+    const scheduledExit = applySpecialWeekdayAdjustment(
+      attendanceExpected.exit || allocationExpected.exit,
+      allocation,
+      day,
+      'exit',
+    );
     const actualEntry = first?.time || null;
     const actualExit = last?.time || null;
     const employeeName = employee.employee_name;
